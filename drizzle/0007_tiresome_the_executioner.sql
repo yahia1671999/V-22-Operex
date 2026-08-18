@@ -1,0 +1,1 @@
+ALTER TABLE `payroll_results` ADD `detailed_deductions` text;

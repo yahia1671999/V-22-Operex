@@ -1,0 +1,10 @@
+{
+  "name": "V.22 SQL-Paradise: OPerix-  Management System",
+  "description": "نظام شامل لإدارة الموارد البشرية والرواتب وإدارة العمليات الهندسية لمؤسسات السوفتوير، مع تتبع المشاريع وسير العمل الإداري.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

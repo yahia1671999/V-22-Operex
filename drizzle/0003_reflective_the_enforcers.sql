@@ -1,0 +1,1 @@
+ALTER TABLE `mission_types` ADD `project_ids` text;
