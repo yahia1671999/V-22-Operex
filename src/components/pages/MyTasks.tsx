@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../AuthContext';
+import { usePermissions } from '../../hooks/usePermissions';
 import { db, doc, updateDoc, arrayUnion, collection, addDoc } from '../../api';
 import { ProjectTask, TaskStatus, WorkflowLog, TaskChatMessage } from '../../types';
 import { cn } from '../../lib/utils';
@@ -59,6 +60,9 @@ export const MyTasks: React.FC = () => {
   const isRtl = language === 'ar';
   const { projectTasks, projects, employees, refreshData } = useData();
   const { profile, user } = useAuth();
+  const { can, canCreatePersonalTask } = usePermissions();
+  const canAddPersonalTask = canCreatePersonalTask ? canCreatePersonalTask() : can('self_service.my_tasks.create');
+
   const [activeTab, setActiveTab] = React.useState<'assignedToMe' | 'assignedByMe' | 'all'>('assignedToMe');
 
   // New task creation modal state
@@ -494,6 +498,10 @@ export const MyTasks: React.FC = () => {
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskForm.title.trim() || !user) return;
+    if (!canAddPersonalTask) {
+      alert(t('لا تمتلك صلاحية إضافة مهمة شخصية'));
+      return;
+    }
     
     setIsSubmittingTask(true);
     try {
@@ -597,20 +605,22 @@ export const MyTasks: React.FC = () => {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setNewTaskForm(prev => ({
-              ...prev,
-              assignedToId: profile?.employeeId || profile?.id || user?.uid || ''
-            }));
-            setIsCreateTaskModalOpen(true);
-          }}
-          className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-2xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap self-stretch sm:self-auto justify-center"
-        >
-          <Plus className="w-5 h-5" />
-          <span>{t('إضافة مهمة جديدة')}</span>
-        </button>
+        {canAddPersonalTask && (
+          <button
+            type="button"
+            onClick={() => {
+              setNewTaskForm(prev => ({
+                ...prev,
+                assignedToId: profile?.employeeId || profile?.id || user?.uid || ''
+              }));
+              setIsCreateTaskModalOpen(true);
+            }}
+            className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-2xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap self-stretch sm:self-auto justify-center"
+          >
+            <Plus className="w-5 h-5" />
+            <span>{t('إضافة مهمة جديدة')}</span>
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

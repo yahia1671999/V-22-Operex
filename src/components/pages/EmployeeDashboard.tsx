@@ -5612,23 +5612,27 @@ export const EmployeeDashboard: React.FC = () => {
               <motion.div
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="bg-card w-full max-w-lg p-8 rounded-none shadow-2xl relative text-right border border-border"
+                className="bg-card w-full max-w-lg rounded-none shadow-2xl relative text-right border border-border flex flex-col max-h-[90vh] overflow-hidden"
                 dir="rtl"
               >
-                <button
-                  onClick={() => setIsMissionModalOpen(false)}
-                  className="absolute top-4 left-4 text-muted-foreground hover:text-foreground transition-colors outline-none"
-                >
-                  <XCircle className="w-6 h-6" />
-                </button>
-                <h3 className="text-2xl font-black text-foreground mb-2">
-                  {t("طلب مأمورية جديد")}
-                </h3>
-                <p className="text-xs text-muted-foreground font-bold mb-6">
-                  {t("اختر المشروع المرتبط بالمأمورية، أو قدم مأمورية عامة.")}
-                </p>
+                <div className="p-6 border-b border-border bg-muted/30 flex items-center justify-between shrink-0">
+                  <div>
+                    <h3 className="text-xl sm:text-2xl font-black text-foreground">
+                      {t("طلب مأمورية جديد")}
+                    </h3>
+                    <p className="text-xs text-muted-foreground font-bold mt-1">
+                      {t("اختر المشروع المرتبط بالمأمورية، أو قدم مأمورية عامة.")}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsMissionModalOpen(false)}
+                    className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors outline-none cursor-pointer"
+                  >
+                    <XCircle className="w-6 h-6" />
+                  </button>
+                </div>
 
-                <div className="space-y-4">
+                <div className="p-6 sm:p-8 space-y-4 overflow-y-auto flex-1 overscroll-contain">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mr-2">
                       {t("تحديد المشروع")}
@@ -5763,12 +5767,21 @@ export const EmployeeDashboard: React.FC = () => {
                       }
                     />
                   </div>
+                </div>
 
+                <div className="p-4 sm:p-6 border-t border-border bg-muted/20 flex gap-4 shrink-0 mt-auto">
                   <button
                     onClick={() => handleCreateRequest("mission-requests")}
-                    className="w-full py-4 bg-primary text-primary-foreground font-black rounded-none shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all active:scale-95"
+                    className="flex-1 py-3.5 sm:py-4 bg-primary text-primary-foreground font-black rounded-none shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all active:scale-95 cursor-pointer"
                   >
                     {t("إرسال الطلب")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsMissionModalOpen(false)}
+                    className="flex-1 py-3.5 sm:py-4 bg-muted hover:bg-muted/80 text-muted-foreground font-black rounded-none transition-colors cursor-pointer"
+                  >
+                    {t("إلغاء")}
                   </button>
                 </div>
               </motion.div>

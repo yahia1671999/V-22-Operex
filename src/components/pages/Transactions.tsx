@@ -29,8 +29,16 @@ import {
   Settings,
   Plane,
   Home,
-  AlertCircle
+  AlertCircle,
+  RotateCcw,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Calculator,
+  HelpCircle,
+  Receipt
 } from 'lucide-react';
+import { CalculationBreakdownModal } from '../payroll/CalculationBreakdownModal';
 import { db, collection, setDoc, doc, deleteDoc, serverTimestamp, OperationType, handleApiError, writeBatch } from '../../api';
 import { useData } from '../../contexts/DataContext';
 import { Employee, Transaction } from '../../types';
@@ -67,6 +75,20 @@ export const Transactions: React.FC = () => {
   const [deductionTypes, setDeductionTypes] = useState<any[]>([]);
   const [activeProfileDeductionDetails, setActiveProfileDeductionDetails] = useState<any[]>([]);
   const [showDeductionsBreakdown, setShowDeductionsBreakdown] = useState(false);
+  const [breakdownTarget, setBreakdownTarget] = useState<{
+    employee: Employee;
+    transaction: Partial<Transaction>;
+  } | null>(null);
+  const [isSyncingApproved, setIsSyncingApproved] = useState(false);
+  const [syncSummaryModal, setSyncSummaryModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    totalCount: number;
+    createdCount: number;
+    updatedCount: number;
+    syncedResults?: any[];
+  } | null>(null);
 
   useEffect(() => {
     const fetchDeductionTypes = async () => {
@@ -214,13 +236,23 @@ export const Transactions: React.FC = () => {
       .filter(p => 
         p.employeeId === employeeId && 
         p.status === 'Approved' && 
-        (p.targetMonth === month || (p.penaltyDate && p.penaltyDate.startsWith(month)))
+        (p.targetMonth === month || (p.penaltyDate && p.penaltyDate.startsWith(month)) || (p.violationDate && p.violationDate.startsWith(month)))
       )
       .reduce((sum, p) => {
-        if (p.penaltyType === 'Amount Deduction') {
-          return sum + (Number(p.deductionValue) || 0);
-        } else if (p.penaltyType === 'Day Deduction') {
-          return sum + Number(((basic / 30) * (Number(p.deductionValue) || 0)).toFixed(2));
+        if (p.hasGrievance && p.grievanceStatus === 'Accepted_Cancelled') {
+          return sum; // التظلم ألغى الجزاء
+        }
+        let pType = p.penaltyType;
+        let dVal = Number(p.deductionValue) || 0;
+        if (p.hasGrievance && p.grievanceStatus === 'Accepted_Modified') {
+          pType = p.postGrievancePenaltyType || pType;
+          dVal = Number(p.postGrievanceDeductionValue) || dVal;
+        }
+
+        if (pType === 'Amount Deduction' || p.deductionType === 'Amount') {
+          return sum + dVal;
+        } else if (pType === 'Day Deduction' || p.deductionType === 'Days') {
+          return sum + Number(((basic / 30) * dVal).toFixed(2));
         }
         return sum;
       }, 0);
@@ -274,13 +306,36 @@ export const Transactions: React.FC = () => {
       let totalDelayMinutes = 0;
       let totalEarlyOutMinutes = 0;
 
-      const daysInMonthSet = records.reduce((acc, r) => {
-        if (r.timestamp) {
-          const d = r.timestamp.substring(0, 10);
-          acc.add(d);
+      // Precompute annual leave entitlement & consumed vacation days map for this employee
+      const entitledVacationDays = Number(emp.leavePlan || 21);
+      const yearStrPrefix = String(year);
+      const approvedVacationLeavesInYear = approvedLeavesList
+        .filter(l => {
+          const isVacationType = l.type === 'Vacation' || l.type === 'Annual' || l.type === t('إجازة اعتيادية') || l.type === t('اعتيادي') || l.type === t('اعتيادية') || l.type === 'اعتيادية' || l.type === 'اعتيادي';
+          return isVacationType && (l.startDate.startsWith(yearStrPrefix) || l.endDate.startsWith(yearStrPrefix));
+        })
+        .sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+      let cumulativeVacationDays = 0;
+      const vacationDaysWithBalance = new Set<string>();
+      const vacationDaysExceedingBalance = new Set<string>();
+
+      for (const vLeave of approvedVacationLeavesInYear) {
+        let curr = new Date(vLeave.startDate);
+        const end = new Date(vLeave.endDate);
+        while (curr <= end) {
+          const cStr = format(curr, 'yyyy-MM-dd');
+          if (cStr.startsWith(yearStrPrefix)) {
+            cumulativeVacationDays++;
+            if (cumulativeVacationDays <= entitledVacationDays) {
+              vacationDaysWithBalance.add(cStr);
+            } else {
+              vacationDaysExceedingBalance.add(cStr);
+            }
+          }
+          curr.setDate(curr.getDate() + 1);
         }
-        return acc;
-      }, new Set<string>());
+      }
 
       for (let d = 1; d <= lastDay; d++) {
         const date = new Date(year, monthIndex, d);
@@ -288,42 +343,104 @@ export const Transactions: React.FC = () => {
 
         const dateStr = format(date, 'yyyy-MM-dd');
         const dayOfWeek = date.getDay();
-
-        // Check for leave
-        const leave = approvedLeavesList.find(l => l.startDate <= dateStr && l.endDate >= dateStr);
         const isWorkDay = shiftWorkDays.includes(dayOfWeek);
 
-        if (leave) {
-          const isUnpaid = leave.type === 'Unpaid' || leave.type === t('دون راتب') || leave.type === t('إجازة غير مدفوعة') || leave.type === 'Unpaid Leave';
-          if (isUnpaid) {
-            if (isWorkDay) unpaidLeaveDaysCount++;
-          } else {
-            paidLeaveDaysCount++;
-            if (isWorkDay) actualWorkDaysCount++;
-          }
-          continue;
-        }
-
-        // Check for mission
+        // 1. Check for mission FIRST (priority)
         const mission = approvedMissionsList.find(m => m.startDate <= dateStr && m.endDate >= dateStr);
         if (mission) {
           missionDaysCount++;
           if (isWorkDay) actualWorkDaysCount++;
-          continue;
+          continue; // Covered by mission: not absent, not deducted
         }
 
+        // 2. Check for leave or work from home
+        const leave = approvedLeavesList.find(l => {
+          let activeEndDate = l.endDate;
+          if (l.returnRequestStatus === 'Approved' && l.actualReturnDate) {
+            try {
+              const returnDate = new Date(l.actualReturnDate);
+              const dayBefore = new Date(returnDate.getTime() - 24 * 60 * 60 * 1000);
+              activeEndDate = dayBefore.toISOString().split('T')[0];
+            } catch (e) {
+              activeEndDate = l.endDate;
+            }
+          }
+          return l.startDate <= dateStr && activeEndDate >= dateStr;
+        });
+
+        if (leave) {
+          const isUnpaid = leave.type === 'Unpaid' || leave.type === t('دون راتب') || leave.type === t('إجازة غير مدفوعة') || leave.type === 'Unpaid Leave';
+          const isWfh = leave.type === 'WorkFromHome' || leave.type === 'WFH' || leave.type === t('العمل من المنزل') || leave.type === 'Work From Home' || leave.type === t('عن بعد');
+          const isVacation = leave.type === 'Vacation' || leave.type === 'Annual' || leave.type === t('إجازة اعتيادية') || leave.type === t('اعتيادي') || leave.type === t('اعتيادية') || leave.type === 'اعتيادية' || leave.type === 'اعتيادي';
+
+          if (isWfh) {
+            // أيام العمل من المنزل والعمل عن بُعد المعتمدة: يوم عمل فعلي كامل ولا يُحتسب غياباً ولا يخصم من الراتب
+            if (isWorkDay) actualWorkDaysCount++;
+            
+            // احتساب ساعات العمل وساعات التأخير / الإضافي المسجلة طبقاً لقواعد الحضور الحالية
+            const dayRecords = records.filter(r => r.timestamp && r.timestamp.startsWith(dateStr));
+            const firstIn = dayRecords.find(r => r.type === 'In');
+            const lastOut = dayRecords.find(r => r.type === 'Out');
+
+            if (firstIn) {
+              presenceDaysCount++;
+              if (shift && shift.startTime) {
+                try {
+                  const shiftStart = parse(shift.startTime, 'HH:mm', new Date(dateStr));
+                  const actualIn = new Date(firstIn.timestamp);
+                  const graceThreshold = addMinutes(shiftStart, shift.graceMinutes || 0);
+                  if (isAfter(actualIn, graceThreshold)) {
+                    totalDelayMinutes += Math.max(0, Math.floor((actualIn.getTime() - shiftStart.getTime()) / (1000 * 60)));
+                  }
+                } catch (err) {}
+              }
+
+              if (lastOut && shift && shift.endTime) {
+                try {
+                  const shiftEnd = parse(shift.endTime, 'HH:mm', new Date(dateStr));
+                  const actualOut = new Date(lastOut.timestamp);
+                  if (isBefore(actualOut, shiftEnd)) {
+                    totalEarlyOutMinutes += Math.max(0, Math.floor((shiftEnd.getTime() - actualOut.getTime()) / (1000 * 60)));
+                  }
+                } catch (err) {}
+              }
+            }
+          } else if (isVacation) {
+            // التحقق من كفاية رصيد الإجازات السنوي للاعتيادي
+            const hasSufficientBalance = !vacationDaysExceedingBalance.has(dateStr);
+            if (hasSufficientBalance) {
+              // رصيد كافٍ: مدفوعة بالكامل ولا تخصم من الراتب
+              paidLeaveDaysCount++;
+              if (isWorkDay) actualWorkDaysCount++;
+            } else {
+              // تجاوز الرصيد: استقطاع إجازة بدون راتب للأيام الفعلية
+              if (isWorkDay) unpaidLeaveDaysCount++;
+            }
+          } else if (isUnpaid) {
+            if (isWorkDay) unpaidLeaveDaysCount++;
+          } else {
+            // إجازات مدفوعة أخرى (مرضي، زواج، إلخ)
+            paidLeaveDaysCount++;
+            if (isWorkDay) actualWorkDaysCount++;
+          }
+          continue; // Covered by leave: proceed to next day
+        }
+
+        // 3. If not a shift work day (weekend / rest day), skip without absence
         if (!isWorkDay) continue;
 
-        actualWorkDaysCount++;
-
+        // 4. Regular scheduled shift work day: check biometric punches
         const dayRecords = records.filter(r => r.timestamp && r.timestamp.startsWith(dateStr));
         const firstIn = dayRecords.find(r => r.type === 'In');
         const lastOut = dayRecords.find(r => r.type === 'Out');
 
-        if (firstIn && lastOut) {
-          presenceDaysCount++;
+        const isNotSubjectToAttendance = emp.subjectToAttendance === 'No' || (emp as any).isSubjectToAttendance === false;
 
-          if (shift && shift.startTime) {
+        if (firstIn || isNotSubjectToAttendance) {
+          presenceDaysCount++;
+          actualWorkDaysCount++;
+
+          if (firstIn && shift && shift.startTime) {
             try {
               const shiftStart = parse(shift.startTime, 'HH:mm', new Date(dateStr));
               const actualIn = new Date(firstIn.timestamp);
@@ -334,7 +451,7 @@ export const Transactions: React.FC = () => {
             } catch (err) {}
           }
 
-          if (shift && shift.endTime) {
+          if (lastOut && shift && shift.endTime) {
             try {
               const shiftEnd = parse(shift.endTime, 'HH:mm', new Date(dateStr));
               const actualOut = new Date(lastOut.timestamp);
@@ -344,6 +461,7 @@ export const Transactions: React.FC = () => {
             } catch (err) {}
           }
         } else {
+          // No punches and subject to attendance => absence without pay
           absenceDaysCount++;
         }
       }
@@ -518,6 +636,37 @@ export const Transactions: React.FC = () => {
     let totalDelayMinutes = 0;
     let totalEarlyOutMinutes = 0;
 
+    // Precompute annual leave entitlement & consumed vacation days map for this employee
+    const entitledVacationDays = Number(emp.leavePlan || 21);
+    const yearStrPrefix = String(year);
+    const approvedVacationLeavesInYear = approvedLeavesList
+      .filter(l => {
+        const isVacationType = l.type === 'Vacation' || l.type === 'Annual' || l.type === t('إجازة اعتيادية') || l.type === t('اعتيادي') || l.type === t('اعتيادية') || l.type === 'اعتيادية' || l.type === 'اعتيادي';
+        return isVacationType && (l.startDate.startsWith(yearStrPrefix) || l.endDate.startsWith(yearStrPrefix));
+      })
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+    let cumulativeVacationDays = 0;
+    const vacationDaysWithBalance = new Set<string>();
+    const vacationDaysExceedingBalance = new Set<string>();
+
+    for (const vLeave of approvedVacationLeavesInYear) {
+      let curr = new Date(vLeave.startDate);
+      const end = new Date(vLeave.endDate);
+      while (curr <= end) {
+        const cStr = format(curr, 'yyyy-MM-dd');
+        if (cStr.startsWith(yearStrPrefix)) {
+          cumulativeVacationDays++;
+          if (cumulativeVacationDays <= entitledVacationDays) {
+            vacationDaysWithBalance.add(cStr);
+          } else {
+            vacationDaysExceedingBalance.add(cStr);
+          }
+        }
+        curr.setDate(curr.getDate() + 1);
+      }
+    }
+
     for (let d = 1; d <= lastDay; d++) {
       const date = new Date(year, monthIndex, d);
       // Skip future days if current month
@@ -525,8 +674,17 @@ export const Transactions: React.FC = () => {
 
       const dateStr = format(date, 'yyyy-MM-dd');
       const dayOfWeek = date.getDay(); // JS getDay: 0 is Sunday, ..., 6 is Saturday
+      const isWorkDay = shiftWorkDays.includes(dayOfWeek);
 
-      // Check for approved leave covering this day FIRST (before weekend/workday check)
+      // 1. Check for approved mission covering this day FIRST (priority)
+      const mission = approvedMissionsList.find(m => m.startDate <= dateStr && m.endDate >= dateStr);
+      if (mission) {
+        missionDaysCount++;
+        if (isWorkDay) actualWorkDaysCount++;
+        continue; // Covered by mission: not absent, not deducted
+      }
+
+      // 2. Check for approved leave covering this day
       const leave = approvedLeavesList.find(l => {
         let activeEndDate = l.endDate;
         if (l.returnRequestStatus === 'Approved' && l.actualReturnDate) {
@@ -541,52 +699,78 @@ export const Transactions: React.FC = () => {
         return l.startDate <= dateStr && activeEndDate >= dateStr;
       });
 
-      const isWorkDay = shiftWorkDays.includes(dayOfWeek);
-
       if (leave) {
         const isUnpaid = leave.type === 'Unpaid' || leave.type === t('دون راتب') || leave.type === t('إجازة غير مدفوعة') || leave.type === 'Unpaid Leave';
-        if (isUnpaid) {
-          if (isWorkDay) {
-            unpaidLeaveDaysCount++;
+        const isWfh = leave.type === 'WorkFromHome' || leave.type === 'WFH' || leave.type === t('العمل من المنزل') || leave.type === 'Work From Home' || leave.type === t('عن بعد');
+        const isVacation = leave.type === 'Vacation' || leave.type === 'Annual' || leave.type === t('إجازة اعتيادية') || leave.type === t('اعتيادي') || leave.type === t('اعتيادية') || leave.type === 'اعتيادية' || leave.type === 'اعتيادي';
+
+        if (isWfh) {
+          // أيام العمل من المنزل والعمل عن بُعد المعتمدة: يوم عمل فعلي كامل ولا يُحتسب غياباً ولا يخصم من الراتب
+          if (isWorkDay) actualWorkDaysCount++;
+
+          const dayRecords = records.filter(r => r.timestamp && r.timestamp.startsWith(dateStr));
+          const firstIn = dayRecords.find(r => r.type === 'In');
+          const lastOut = dayRecords.find(r => r.type === 'Out');
+
+          if (firstIn) {
+            presenceDaysCount++;
+            if (shift && shift.startTime) {
+              try {
+                const shiftStart = parse(shift.startTime, 'HH:mm', new Date(dateStr));
+                const actualIn = new Date(firstIn.timestamp);
+                const graceThreshold = addMinutes(shiftStart, shift.graceMinutes || 0);
+                if (isAfter(actualIn, graceThreshold)) {
+                  totalDelayMinutes += Math.max(0, Math.floor((actualIn.getTime() - shiftStart.getTime()) / (1000 * 60)));
+                }
+              } catch (err) {}
+            }
+
+            if (lastOut && shift && shift.endTime) {
+              try {
+                const shiftEnd = parse(shift.endTime, 'HH:mm', new Date(dateStr));
+                const actualOut = new Date(lastOut.timestamp);
+                if (isBefore(actualOut, shiftEnd)) {
+                  totalEarlyOutMinutes += Math.max(0, Math.floor((shiftEnd.getTime() - actualOut.getTime()) / (1000 * 60)));
+                }
+              } catch (err) {}
+            }
           }
+        } else if (isVacation) {
+          // التحقق من كفاية رصيد الإجازات السنوي للاعتيادي
+          const hasSufficientBalance = !vacationDaysExceedingBalance.has(dateStr);
+          if (hasSufficientBalance) {
+            // رصيد كافٍ: مدفوعة بالكامل ولا تخصم من الراتب
+            paidLeaveDaysCount++;
+            if (isWorkDay) actualWorkDaysCount++;
+          } else {
+            // تجاوز الرصيد: استقطاع إجازة بدون راتب للأيام الفعلية
+            if (isWorkDay) unpaidLeaveDaysCount++;
+          }
+        } else if (isUnpaid) {
+          if (isWorkDay) unpaidLeaveDaysCount++;
         } else {
+          // إجازات مدفوعة أخرى (مرضي، زواج، إلخ)
           paidLeaveDaysCount++;
-          if (isWorkDay) {
-            actualWorkDaysCount++;
-          }
+          if (isWorkDay) actualWorkDaysCount++;
         }
-        continue;
+        continue; // Covered by leave: proceed to next day
       }
 
-      // Check for approved mission covering this day FIRST (before weekend/workday check)
-      const mission = approvedMissionsList.find(m => m.startDate <= dateStr && m.endDate >= dateStr);
-      if (mission) {
-        missionDaysCount++;
-        if (isWorkDay) {
-          actualWorkDaysCount++;
-        }
-        continue;
-      }
+      // 3. If not a shift work day (weekend / rest day), skip without absence
+      if (!isWorkDay) continue;
 
-      if (!isWorkDay) {
-        // عطلة رسمية (Holiday / Rest Day / Weekend)
-        // Rule 2: "إذا كان اليوم عطلة رسمية: لا يحسب غياب"
-        continue;
-      }
-
-      // If it is a shift work day, it counts towards "أيام العمل الفعلية"
-      actualWorkDaysCount++;
-
-      // Check for valid attendance (Check in and Check out correct)
-      const dayRecords = records.filter(r => r.timestamp.startsWith(dateStr));
+      // 4. Regular scheduled shift work day: check biometric punches
+      const dayRecords = records.filter(r => r.timestamp && r.timestamp.startsWith(dateStr));
       const firstIn = dayRecords.find(r => r.type === 'In');
       const lastOut = dayRecords.find(r => r.type === 'Out');
 
-      if (firstIn && lastOut) {
-        presenceDaysCount++;
+      const isNotSubjectToAttendance = emp.subjectToAttendance === 'No' || (emp as any).isSubjectToAttendance === false;
 
-        // Calculate late arrival delay minutes
-        if (shift && shift.startTime) {
+      if (firstIn || isNotSubjectToAttendance) {
+        presenceDaysCount++;
+        actualWorkDaysCount++;
+
+        if (firstIn && shift && shift.startTime) {
           try {
             const shiftStart = parse(shift.startTime, 'HH:mm', new Date(dateStr));
             const actualIn = new Date(firstIn.timestamp);
@@ -599,8 +783,7 @@ export const Transactions: React.FC = () => {
           }
         }
 
-        // Calculate early departure minutes
-        if (shift && shift.endTime) {
+        if (lastOut && shift && shift.endTime) {
           try {
             const shiftEnd = parse(shift.endTime, 'HH:mm', new Date(dateStr));
             const actualOut = new Date(lastOut.timestamp);
@@ -612,7 +795,7 @@ export const Transactions: React.FC = () => {
           }
         }
       } else {
-        // No attendance, no leave, no mission => Absence
+        // No attendance and subject to attendance => Absence
         absenceDaysCount++;
       }
     }
@@ -733,13 +916,52 @@ export const Transactions: React.FC = () => {
         } catch (e) {}
       }
 
+      // Precompute annual leave entitlement & consumed vacation days map for this employee
+      const entitledVacationDays = Number(emp.leavePlan || 21);
+      const yearStrPrefix = String(year);
+      const approvedVacationLeavesInYear = approvedLeavesList
+        .filter(l => {
+          const isVacationType = l.type === 'Vacation' || l.type === 'Annual' || l.type === t('إجازة اعتيادية') || l.type === t('اعتيادي') || l.type === t('اعتيادية') || l.type === 'اعتيادية' || l.type === 'اعتيادي';
+          return isVacationType && (l.startDate.startsWith(yearStrPrefix) || l.endDate.startsWith(yearStrPrefix));
+        })
+        .sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+      let cumulativeVacationDays = 0;
+      const vacationDaysExceedingBalance = new Set<string>();
+
+      for (const vLeave of approvedVacationLeavesInYear) {
+        let curr = new Date(vLeave.startDate);
+        const end = new Date(vLeave.endDate);
+        while (curr <= end) {
+          const cStr = format(curr, 'yyyy-MM-dd');
+          if (cStr.startsWith(yearStrPrefix)) {
+            cumulativeVacationDays++;
+            if (cumulativeVacationDays > entitledVacationDays) {
+              vacationDaysExceedingBalance.add(cStr);
+            }
+          }
+          curr.setDate(curr.getDate() + 1);
+        }
+      }
+
       for (let d = 1; d <= lastDay; d++) {
         const date = new Date(year, monthIndex, d);
         if (date > now) continue;
         const dateStr = format(date, 'yyyy-MM-dd');
         const dayOfWeek = date.getDay();
 
-        // Check for approved leave covering this day FIRST (before weekend/workday check)
+        // Check for approved mission covering this day FIRST
+        const isMission = (missions || []).some(m => 
+          m.employeeId === emp.id && 
+          m.status === 'Approved' && 
+          dateStr >= m.startDate && 
+          dateStr <= m.endDate
+        );
+        if (isMission) {
+          continue;
+        }
+
+        // Check for approved leave or work from home covering this day
         const leave = approvedLeavesList.find(l => {
           let activeEndDate = l.endDate;
           if (l.returnRequestStatus === 'Approved' && l.actualReturnDate) {
@@ -756,8 +978,19 @@ export const Transactions: React.FC = () => {
 
         if (leave) {
           const isUnpaid = leave.type === 'Unpaid' || leave.type === t('دون راتب') || leave.type === t('إجازة غير مدفوعة') || leave.type === 'Unpaid Leave';
-          if (isUnpaid) {
+          const isWfh = leave.type === 'WorkFromHome' || leave.type === 'WFH' || leave.type === t('العمل من المنزل') || leave.type === 'Work From Home';
+          const isVacation = leave.type === 'Vacation' || leave.type === 'Annual' || leave.type === t('إجازة اعتيادية') || leave.type === t('اعتيادي') || leave.type === t('اعتيادية') || leave.type === 'اعتيادية' || leave.type === 'اعتيادي';
+
+          if (isVacation) {
+            if (vacationDaysExceedingBalance.has(dateStr)) {
+              // تجاوز الرصيد المتاح: يُطبق الاستقطاع طبقاً للقواعد الحالية
+              derivedUnpaidLeaveDays++;
+            }
+            // إذا كان الرصيد كافياً: لا يُحتسب غياباً ولا يخصم من الراتب ويخصم فقط من رصيد الإجازات
+          } else if (isUnpaid) {
             derivedUnpaidLeaveDays++;
+          } else if (isWfh) {
+            // العمل من المنزل / العمل عن بعد المعتمد: يوم عمل فعلي كامل ولا يُحتسب غياباً ولا يخصم من الراتب
           }
           continue;
         }
@@ -1076,6 +1309,60 @@ export const Transactions: React.FC = () => {
     }
   };
 
+  const handleSyncApproved = async (empId?: string) => {
+    try {
+      setIsSyncingApproved(true);
+      const token = localStorage.getItem('auth_token');
+      const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+      const targetEmpName = empId ? employees.find(e => e.id === empId)?.name : null;
+      const promptMsg = empId 
+        ? (isRtl ? `هل ترغب في مراجعة وتحديث كافة المستحقات والاستقطاعات المعتمدة للموظف "${targetEmpName}" لشهر ${selectedMonth} وترحيلها للحركات الشهرية؟` : `Do you want to review and sync all approved allowances and deductions for "${targetEmpName}" in month ${selectedMonth}?`)
+        : (isRtl ? `هل ترغب في مراجعة كافة المستحقات والاستقطاعات الفعلية المعتمدة لجميع الموظفين لشهر ${selectedMonth} وترحيلها تلقائياً مع منع التكرار؟` : `Do you want to review and sync all approved allowances and deductions for all employees in month ${selectedMonth}?`);
+
+      if (!window.confirm(promptMsg)) {
+        setIsSyncingApproved(false);
+        return;
+      }
+
+      const res = await fetch('/api/transactions/sync-approved', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: JSON.stringify({
+          month: selectedMonth,
+          employeeId: empId || undefined
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || (isRtl ? 'فشلت عملية المراجعة والمزامنة' : 'Sync operation failed'));
+      }
+
+      await refreshData();
+
+      setSyncSummaryModal({
+        isOpen: true,
+        title: isRtl ? 'تمت مراجعة وترحيل المستحقات والاستقطاعات بنجاح' : 'Allowances & Deductions Synced Successfully',
+        message: isRtl 
+          ? `تم فحص ومطابقة جميع البدلات والاستقطاعات الفعلية المعتمدة لشهر ${selectedMonth} وتحديث الحركات الشهرية بدون أي تكرار.`
+          : `All approved allowances and deductions for month ${selectedMonth} have been reconciled and merged into monthly transactions without duplicates.`,
+        totalCount: data.totalCount || 0,
+        createdCount: data.createdCount || 0,
+        updatedCount: data.updatedCount || 0,
+        syncedResults: data.syncedResults || []
+      });
+    } catch (err: any) {
+      console.error("Sync error:", err);
+      alert(err.message || (isRtl ? 'حدث خطأ أثناء المزامنة' : 'An error occurred during synchronization'));
+    } finally {
+      setIsSyncingApproved(false);
+    }
+  };
+
   const handleSkipEmployee = async (empId: string) => {
     if (!confirm(t('هل تريد استبعاد هذا الموظف من شهر الحالي؟ سيتم إضافة حركة بصافي صفر.'))) return;
     
@@ -1326,14 +1613,25 @@ export const Transactions: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-3">
           {activeTab === 'processing' && (
-            <button 
-              onClick={handleCopyFromPreviousMonth}
-              disabled={isCopying}
-              className="flex items-center gap-2 px-5 py-3 bg-primary/10 text-primary font-black rounded-2xl hover:bg-primary/20 transition-all border border-primary/20 disabled:opacity-50"
-            >
-              <Copy className="w-4 h-4" />
-              <span>{t('النسخ من الشهر السابق')}</span>
-            </button>
+            <>
+              <button 
+                onClick={() => handleSyncApproved()}
+                disabled={isSyncingApproved}
+                className="flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl transition-all shadow-lg shadow-emerald-200 dark:shadow-none disabled:opacity-50"
+                title={t('مراجعة جميع المستحقات والاستقطاعات المعتمدة للموظفين للشهر المحدد وترحيلها تلقائياً بدون تكرار')}
+              >
+                <RotateCcw className={cn("w-4 h-4", isSyncingApproved && "animate-spin")} />
+                <span>{isSyncingApproved ? t('جاري المراجعة والترحيل...') : t('مراجعة وترحيل المستحقات والاستقطاعات')}</span>
+              </button>
+              <button 
+                onClick={handleCopyFromPreviousMonth}
+                disabled={isCopying}
+                className="flex items-center gap-2 px-5 py-3 bg-primary/10 text-primary font-black rounded-2xl hover:bg-primary/20 transition-all border border-primary/20 disabled:opacity-50"
+              >
+                <Copy className="w-4 h-4" />
+                <span>{t('النسخ من الشهر السابق')}</span>
+              </button>
+            </>
           )}
           <label className="cursor-pointer p-3 bg-card border border-border rounded-xl text-muted-foreground hover:bg-muted transition-colors shadow-sm flex items-center gap-2 font-bold">
             <Upload className="w-5 h-5" />
@@ -1532,6 +1830,25 @@ export const Transactions: React.FC = () => {
                               <FileText className="w-4 h-4" />
                             </button>
 
+                            {/* Detailed Calculation Breakdown Button */}
+                            <button 
+                              onClick={() => setBreakdownTarget({ employee: emp, transaction })}
+                              className="p-2.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 rounded-xl border border-indigo-100 dark:border-indigo-900/30 transition-all hover:scale-[1.05] duration-150"
+                              title={t('تفاصيل وطريقة احتساب المبالغ (المعادلات والمصادر)')}
+                            >
+                              <Calculator className="w-4 h-4" />
+                            </button>
+
+                            {/* Quick Sync Button for Employee */}
+                            <button 
+                              onClick={() => handleSyncApproved(emp.id)}
+                              disabled={isSyncingApproved}
+                              className="p-2.5 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-100 dark:border-emerald-900/30 transition-all hover:scale-[1.05] duration-150 disabled:opacity-50"
+                              title={t('مراجعة وترحيل المستحقات والاستقطاعات المعتمدة لهذا الموظف')}
+                            >
+                              <RotateCcw className={cn("w-4 h-4", isSyncingApproved && "animate-spin")} />
+                            </button>
+
                             {hasSavedTransaction ? (
                               <>
                                 <button 
@@ -1682,6 +1999,15 @@ export const Transactions: React.FC = () => {
                             <Eye className="w-4 h-4" />
                           </button>
                           <button 
+                            onClick={() => {
+                              if (emp) setBreakdownTarget({ employee: emp, transaction: tx });
+                            }}
+                            className="p-2.5 text-indigo-600 dark:text-indigo-400 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-all shadow-sm"
+                            title={t('تفاصيل وطريقة احتساب المبالغ (المعادلات والمصادر)')}
+                          >
+                            <Calculator className="w-4 h-4" />
+                          </button>
+                          <button 
                             onClick={() => handleEdit(tx)}
                             className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-all shadow-sm"
                             title={t('تعديل')}
@@ -1728,6 +2054,34 @@ export const Transactions: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex gap-2">
+                  <button 
+                    onClick={() => {
+                      if (selectedPayCard) {
+                        const emp = employees.find(e => e.id === selectedPayCard.employeeId);
+                        if (emp) {
+                          setBreakdownTarget({ employee: emp, transaction: selectedPayCard });
+                        }
+                      }
+                    }}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/30 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 font-black rounded-xl transition-all border border-indigo-200 dark:border-indigo-800/40 text-xs"
+                    title={t('عرض تفاصيل ومصادر ومعادلات احتساب كل مبلغ')}
+                  >
+                    <Calculator className="w-4 h-4" />
+                    <span>{t('طريقة احتساب المبالغ')}</span>
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (selectedPayCard) {
+                        handleSyncApproved(selectedPayCard.employeeId);
+                      }
+                    }}
+                    disabled={isSyncingApproved}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 font-black rounded-xl transition-all border border-emerald-200 dark:border-emerald-800/40 text-xs disabled:opacity-50"
+                    title={t('مراجعة وترحيل المستحقات والاستقطاعات المعتمدة لهذا الموظف')}
+                  >
+                    <RotateCcw className={cn("w-4 h-4", isSyncingApproved && "animate-spin")} />
+                    <span>{t('تحديث ومزامنة المستحقات')}</span>
+                  </button>
                   <button 
                     onClick={() => window.print()}
                     className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-xl transition-all"
@@ -1964,12 +2318,13 @@ export const Transactions: React.FC = () => {
                           { label: t('اشتراك التأمينات الاجتماعية والغطاء الاجتماعي / Social Insurance Contribution'), val: selectedPayCard.socialInsurance },
                           { label: t('ضريبة كسب العمل / Income Tax'), val: selectedPayCard.taxValue || 0 },
                           { label: t('سداد قسط قرض وسلف مستقطعة (سلف مستردة) / Loan Repayment & Advances'), val: selectedPayCard.loans },
-                          { label: t('مقتطعات أيام الغياب والإجازات غير مدفوعة الأجر / Absence & Unpaid Leave Deduction'), val: (selectedPayCard.absenceDeduction || 0) + (selectedPayCard.unpaidLeaveDeduction || 0) },
+                          { label: `${t('خصم أيام الغياب بدون مرتب')} (${selectedPayCard.absenceDays || 0} ${t('يوم')}) / Unpaid Absence Deduction`, val: selectedPayCard.absenceDeduction },
+                          { label: `${t('خصم أيام الإجازة بدون مرتب')} (${selectedPayCard.unpaidLeaveDays || 0} ${t('يوم')}) / Unpaid Leave Deduction`, val: selectedPayCard.unpaidLeaveDeduction },
                           { label: t('خصم التأخر والانصراف المبكر / Late Arrival & Early Departure Deduction'), val: selectedPayCard.departureDelayDeduction },
                           { label: t('استلام مسبق (نقدي) / Pre-received Cash'), val: selectedPayCard.salaryReceived },
                           { label: t('استلام مسبق (بنكي) / Pre-received Bank'), val: selectedPayCard.bankReceived },
                           { label: t('عقوبات وجزاءات مالية أخرى (جزاء مالي) / Financial Penalty & Other Deductions'), val: selectedPayCard.otherDeductions }
-                        ].map((item, i) => item.val > 0 && (
+                        ].map((item, i) => (item.val !== undefined && item.val > 0) && (
                           <div key={i} className="flex justify-between items-center text-sm">
                             <span className="font-bold text-slate-500">{item.label}</span>
                             <span className="font-black text-slate-900 dark:text-white tabular-nums">-{formatCurrency(item.val)}</span>
@@ -2094,8 +2449,10 @@ export const Transactions: React.FC = () => {
 
                   <div className="py-2.5 flex justify-between items-center text-sm font-bold">
                     <div className="flex flex-col text-right">
-                      <span className="text-slate-800 dark:text-slate-200">{t('مقتطعات أيام الغياب المطبقة')}</span>
-                      <span className="text-[10px] text-slate-450 dark:text-slate-500 font-medium">Absence Days Deductions</span>
+                      <span className="text-slate-800 dark:text-slate-200">
+                        {t('استقطاع الغياب بدون مرتب')} ({selectedPayCard.absenceDays || 0} {t('يوم')})
+                      </span>
+                      <span className="text-[10px] text-slate-450 dark:text-slate-500 font-medium">Unpaid Absence Days Deduction</span>
                     </div>
                     <span className="font-black text-slate-900 dark:text-white tabular-nums">
                       {formatCurrency(selectedPayCard.absenceDeduction || 0)}
@@ -2104,8 +2461,10 @@ export const Transactions: React.FC = () => {
 
                   <div className="py-2.5 flex justify-between items-center text-sm font-bold">
                     <div className="flex flex-col text-right">
-                      <span className="text-slate-800 dark:text-slate-200">{t('خصومات الإجازات غير مدفوعة الأجر')}</span>
-                      <span className="text-[10px] text-slate-450 dark:text-slate-500 font-medium">Unpaid Leaves Deductions</span>
+                      <span className="text-slate-800 dark:text-slate-200">
+                        {t('استقطاع الإجازة بدون مرتب')} ({selectedPayCard.unpaidLeaveDays || 0} {t('يوم')})
+                      </span>
+                      <span className="text-[10px] text-slate-450 dark:text-slate-500 font-medium">Unpaid Leaves Deduction</span>
                     </div>
                     <span className="font-black text-slate-900 dark:text-white tabular-nums">
                       {formatCurrency(selectedPayCard.unpaidLeaveDeduction || 0)}
@@ -2161,7 +2520,25 @@ export const Transactions: React.FC = () => {
                     <p className="text-sm text-slate-400 font-bold uppercase tracking-widest">Transaction Management</p>
                   </div>
                 </div>
-                <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-colors"><X className="w-6 h-6 text-slate-400" /></button>
+                <div className="flex items-center gap-2">
+                  {formData.employeeId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const emp = employees.find(e => e.id === formData.employeeId);
+                        if (emp) {
+                          setBreakdownTarget({ employee: emp, transaction: formData });
+                        }
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 font-bold text-xs rounded-xl border border-indigo-200 dark:border-indigo-800/40 transition-all shadow-sm"
+                      title={t('عرض تفاصيل ومصادر ومعادلات احتساب كل مبلغ لهذا الموظف')}
+                    >
+                      <Calculator className="w-4 h-4" />
+                      <span>{t('طريقة احتساب المبالغ')}</span>
+                    </button>
+                  )}
+                  <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-colors"><X className="w-6 h-6 text-slate-400" /></button>
+                </div>
               </div>
               <form onSubmit={handleSubmit} className="p-8 space-y-8 max-h-[75vh] overflow-y-auto custom-scrollbar">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -2618,6 +2995,137 @@ export const Transactions: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Sync Summary Modal */}
+      <AnimatePresence>
+        {syncSummaryModal?.isOpen && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => setSyncSummaryModal(null)} 
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 20 }} 
+              className="relative bg-white dark:bg-slate-900 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden border border-border"
+            >
+              <div className="p-6 border-b border-border bg-emerald-500/10 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-emerald-500 text-white rounded-2xl shadow-md shadow-emerald-500/20">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-foreground">{syncSummaryModal.title}</h3>
+                    <p className="text-xs text-muted-foreground font-bold">{selectedMonth}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSyncSummaryModal(null)} 
+                  className="p-2 hover:bg-muted rounded-xl transition-colors text-muted-foreground"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5 max-h-[65vh] overflow-y-auto custom-scrollbar">
+                <p className="text-sm font-medium text-foreground leading-relaxed">
+                  {syncSummaryModal.message}
+                </p>
+
+                {/* Statistics Cards */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-muted/40 p-4 rounded-2xl border border-border text-center">
+                    <p className="text-xs font-bold text-muted-foreground mb-1">{t('إجمالي الموظفين')}</p>
+                    <p className="text-2xl font-black text-foreground tabular-nums">{syncSummaryModal.totalCount}</p>
+                  </div>
+                  <div className="bg-emerald-500/10 p-4 rounded-2xl border border-emerald-500/20 text-center">
+                    <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mb-1">{t('حركات محدثة')}</p>
+                    <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums">{syncSummaryModal.updatedCount}</p>
+                  </div>
+                  <div className="bg-blue-500/10 p-4 rounded-2xl border border-blue-500/20 text-center">
+                    <p className="text-xs font-bold text-blue-600 dark:text-blue-400 mb-1">{t('حركات جديدة (منع التكرار)')}</p>
+                    <p className="text-2xl font-black text-blue-600 dark:text-blue-400 tabular-nums">{syncSummaryModal.createdCount}</p>
+                  </div>
+                </div>
+
+                {/* Synced Employees Table */}
+                {syncSummaryModal.syncedResults && syncSummaryModal.syncedResults.length > 0 && (
+                  <div className="border border-border rounded-2xl overflow-hidden mt-4">
+                    <div className="bg-muted/60 px-4 py-2.5 text-xs font-black text-muted-foreground">
+                      {t('تفاصيل الموظفين المرحلة بياناتهم')}
+                    </div>
+                    <div className="max-h-60 overflow-y-auto divide-y divide-border text-xs">
+                      {syncSummaryModal.syncedResults.map((r: any) => (
+                        <div key={r.employeeId} className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+                          <div>
+                            <span className="font-black text-foreground">{r.employeeName}</span>
+                            <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
+                              {r.penalties > 0 && <span className="text-red-500">{t('جزاءات')}: {formatCurrency(r.penalties)}</span>}
+                              {r.loans > 0 && <span className="text-amber-500">{t('سلف')}: {formatCurrency(r.loans)}</span>}
+                              {r.si > 0 && <span>{t('تأمينات')}: {formatCurrency(r.si)}</span>}
+                              {r.tax > 0 && <span>{t('ضرائب')}: {formatCurrency(r.tax)}</span>}
+                            </div>
+                          </div>
+                          <div className="text-left">
+                            <span className="font-black text-indigo-600 dark:text-indigo-400 text-sm tabular-nums">
+                              {formatCurrency(r.netSalary)}
+                            </span>
+                            <p className="text-[10px] text-muted-foreground">{t('صافي المستحق')}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-5 border-t border-border bg-muted/20 flex justify-end gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setSyncSummaryModal(null)}
+                  className="px-6 py-2.5 bg-primary text-primary-foreground font-black text-xs rounded-xl shadow-md hover:bg-primary/90 transition-all"
+                >
+                  {t('تم، إغلاق')}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Calculation Provenance & Breakdown Modal */}
+      {breakdownTarget && (
+        <CalculationBreakdownModal
+          isOpen={!!breakdownTarget}
+          onClose={() => setBreakdownTarget(null)}
+          employee={breakdownTarget.employee}
+          transaction={breakdownTarget.transaction}
+          month={selectedMonth}
+          systemSettings={systemSettings}
+          extraContext={{
+            penaltiesList: (penalties || []).filter(p => 
+              p.employeeId === breakdownTarget.employee.id && 
+              p.status === 'Approved' && 
+              (p.targetMonth === selectedMonth || (p.penaltyDate && p.penaltyDate.startsWith(selectedMonth)))
+            ),
+            missionsList: (missions || []).filter(m => 
+              m.employeeId === breakdownTarget.employee.id && 
+              m.status === 'Approved' && 
+              (m.startDate?.startsWith(selectedMonth) || m.endDate?.startsWith(selectedMonth))
+            ),
+            leavesList: (leaveRequests || []).filter(l => 
+              l.employeeId === breakdownTarget.employee.id && 
+              l.status === 'Approved' && 
+              (l.startDate?.startsWith(selectedMonth) || l.endDate?.startsWith(selectedMonth))
+            ),
+            deductionTypesList: deductionTypes
+          }}
+        />
+      )}
     </div>
   );
 };

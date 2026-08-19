@@ -1142,6 +1142,18 @@ export const SYSTEM_PERMISSIONS: SystemPermission[] = [
     scope: 'own'
   },
   {
+    key: 'self_service.my_tasks.create',
+    module: 'self_service',
+    resource: 'my_tasks',
+    action: 'create',
+    arabicLabel: 'إضافة مهمة شخصية',
+    englishLabel: 'Create Personal Task',
+    description: 'صلاحية تتيح للمستخدم إضافة وإنشاء مهام شخصية جديدة في شاشة مهامي الشخصية',
+    isDangerous: false,
+    requiresEmployeeMapping: true,
+    scope: 'own'
+  },
+  {
     key: 'self_service.profile.edit',
     module: 'self_service',
     resource: 'profile',
@@ -1249,7 +1261,7 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'operations.task_chat.view', 'operations.task_chat.view_all', 'operations.task_chat.send', 'operations.task_chat.delete_own', 'operations.task_chat.moderate',
     'time_management.eisenhower_all',
     'files.upload', 'files.download', 'files.delete_own', 'files.delete_any',
-    'self_service.dashboard.view', 'self_service.my_tasks.view'
+    'self_service.dashboard.view', 'self_service.my_tasks.view', 'self_service.my_tasks.create'
   ],
   'Project Manager': [
     'operations.dashboard.view',
@@ -1257,7 +1269,7 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'operations.tasks.view', 'operations.tasks.create', 'operations.tasks.edit', 'operations.tasks.assign', 'operations.tasks.change_status', 'operations.tasks.approve', 'operations.tasks.close',
     'operations.task_chat.view', 'operations.task_chat.send', 'operations.task_chat.delete_own',
     'hr.penalties.approve', 'hr.penalties.view',
-    'self_service.my_tasks.view', 'self_service.dashboard.view',
+    'self_service.my_tasks.view', 'self_service.my_tasks.create', 'self_service.dashboard.view',
     'files.upload', 'files.download', 'files.delete_own'
   ],
   'Team Leader': [
@@ -1266,14 +1278,14 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'operations.tasks.view', 'operations.tasks.create', 'operations.tasks.edit', 'operations.tasks.assign', 'operations.tasks.change_status', 'operations.tasks.approve',
     'operations.task_chat.view', 'operations.task_chat.send', 'operations.task_chat.delete_own',
     'hr.penalties.approve', 'hr.penalties.view',
-    'self_service.my_tasks.view', 'self_service.dashboard.view',
+    'self_service.my_tasks.view', 'self_service.my_tasks.create', 'self_service.dashboard.view',
     'files.upload', 'files.download', 'files.delete_own'
   ],
   'Operations User': [
     'operations.dashboard.view',
     'operations.tasks.view', 'operations.tasks.create', 'operations.tasks.edit', 'operations.tasks.change_status',
     'operations.task_chat.view', 'operations.task_chat.send',
-    'self_service.my_tasks.view', 'self_service.dashboard.view',
+    'self_service.my_tasks.view', 'self_service.my_tasks.create', 'self_service.dashboard.view',
     'files.upload', 'files.download'
   ],
   'HR Manager': [
@@ -1286,7 +1298,7 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'hr.admin_structure.view', 'hr.admin_structure.manage',
     'hr.performance.manage', 'admin.notices.manage', 'admin.notices.view',
     'operations.tasks.create', 'operations.tasks.edit', 'operations.tasks.assign',
-    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.profile.edit',
+    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.my_tasks.create', 'self_service.profile.edit',
     'files.upload', 'files.download', 'files.delete_own', 'files.delete_any'
   ],
   'HR Officer': [
@@ -1297,7 +1309,7 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'hr.penalties.view', 'hr.penalties.create', 'hr.penalties.edit',
     'hr.investigations.view',
     'hr.performance.view',
-    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.profile.edit',
+    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.my_tasks.create', 'self_service.profile.edit',
     'files.upload', 'files.download'
   ],
   'Payroll Manager': [
@@ -1305,20 +1317,20 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'payroll.runs.view', 'payroll.runs.create', 'payroll.runs.calculate', 'payroll.runs.submit', 'payroll.runs.review', 'payroll.runs.approve', 'payroll.runs.lock', 'payroll.runs.export', 'payroll.runs.delete',
     'payroll.mission_allowance_runs.view', 'payroll.mission_allowance_runs.create', 'payroll.mission_allowance_runs.edit', 'payroll.mission_allowance_runs.delete', 'payroll.mission_allowance_runs.submit', 'payroll.mission_allowance_runs.review', 'payroll.mission_allowance_runs.approve', 'payroll.mission_allowance_runs.lock', 'payroll.mission_allowance_runs.export',
     'payroll.settlements.manage', 'payroll.allowance_types.view', 'payroll.allowance_types.manage',
-    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.profile.edit',
+    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.my_tasks.create', 'self_service.profile.edit',
     'files.upload', 'files.download', 'files.delete_own', 'files.delete_any'
   ],
   'Payroll Officer': [
     'payroll.dashboard.view', 'payroll.transactions.view', 'payroll.transactions.create', 'payroll.transactions.edit',
     'payroll.runs.view', 'payroll.runs.create', 'payroll.runs.calculate', 'payroll.runs.submit', 'payroll.runs.review',
     'payroll.mission_allowance_runs.view', 'payroll.mission_allowance_runs.create', 'payroll.mission_allowance_runs.edit', 'payroll.mission_allowance_runs.submit', 'payroll.mission_allowance_runs.review',
-    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.profile.edit',
+    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.my_tasks.create', 'self_service.profile.edit',
     'files.upload', 'files.download'
   ],
   'Attendance Officer': [
     'hr.dashboard.view', 'hr.attendance.view', 'hr.attendance.create', 'hr.attendance.edit',
     'admin.wifi_settings.manage',
-    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.profile.edit',
+    'self_service.dashboard.view', 'self_service.attendance.check_in', 'self_service.attendance.check_out', 'self_service.leaves.create', 'self_service.missions.create', 'self_service.my_tasks.view', 'self_service.my_tasks.create', 'self_service.profile.edit',
     'files.upload', 'files.download'
   ],
   'Auditor': [
@@ -1335,8 +1347,8 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'self_service.leaves.create',
     'self_service.missions.create',
     'self_service.my_tasks.view',
+    'self_service.my_tasks.create',
     'self_service.profile.edit',
-    'operations.tasks.create',
     'operations.tasks.change_status',
     'files.upload', 'files.download'
   ],

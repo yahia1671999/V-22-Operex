@@ -90,15 +90,15 @@ export const MissionEvaluationModal: React.FC<MissionEvaluationModalProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
-          className="bg-card border-2 border-border p-6 max-w-2xl w-full my-8 space-y-6 shadow-2xl relative text-right"
+          className="bg-card border-2 border-border max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl relative text-right"
         >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-border pb-4">
+          <div className="flex items-center justify-between border-b border-border p-6 bg-muted/30 shrink-0">
             <div>
               <div className="flex items-center gap-2">
                 <Award className="w-6 h-6 text-primary" />
@@ -112,11 +112,13 @@ export const MissionEvaluationModal: React.FC<MissionEvaluationModalProps> = ({
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 hover:bg-muted font-bold text-muted-foreground hover:text-foreground transition-all"
+              className="p-1.5 hover:bg-muted font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
+
+          <div className="p-6 space-y-6 overflow-y-auto flex-1 overscroll-contain">
 
           {/* Mission & Employee Info Banner */}
           <div className="bg-primary/5 border border-primary/20 p-4 space-y-2">
@@ -335,17 +337,18 @@ export const MissionEvaluationModal: React.FC<MissionEvaluationModalProps> = ({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="اكتب أي ملاحظات إضافية حول أداء الموظف أو مخرجات المأمورية..."
-              className="w-full p-3 bg-background border border-border text-xs outline-none focus:ring-2 focus:ring-primary text-foreground"
+              className="w-full p-3 bg-background border border-border text-xs outline-none focus:ring-2 focus:ring-primary text-foreground resize-none"
             />
+          </div>
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+          <div className="flex items-center justify-end gap-3 border-t border-border p-4 bg-muted/20 shrink-0 mt-auto">
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="px-5 py-2.5 bg-muted text-muted-foreground font-bold text-xs hover:bg-muted/80 transition-all border border-border disabled:opacity-50"
+              className="px-5 py-2.5 bg-muted text-muted-foreground font-bold text-xs hover:bg-muted/80 transition-all border border-border disabled:opacity-50 cursor-pointer"
             >
               إلغاء
             </button>

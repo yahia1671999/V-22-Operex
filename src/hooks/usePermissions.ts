@@ -45,7 +45,10 @@ const SCREEN_TO_PERMISSION_MAP: Record<string, Record<string, string>> = {
     view: 'operations.projects.view', create: 'operations.projects.create', edit: 'operations.projects.edit', delete: 'operations.projects.delete', export: 'operations.projects.view'
   },
   'my-tasks': {
-    view: 'self_service.my_tasks.view', create: 'operations.tasks.create', edit: 'operations.tasks.change_status', delete: 'operations.tasks.close', export: 'operations.tasks.view'
+    view: 'self_service.my_tasks.view', create: 'self_service.my_tasks.create', edit: 'operations.tasks.change_status', delete: 'operations.tasks.close', export: 'operations.tasks.view'
+  },
+  'my_tasks': {
+    view: 'self_service.my_tasks.view', create: 'self_service.my_tasks.create', edit: 'operations.tasks.change_status', delete: 'operations.tasks.close', export: 'operations.tasks.view'
   },
   'users': {
     view: 'admin.users.view', create: 'admin.users.create', edit: 'admin.users.edit', delete: 'admin.users.delete', export: 'admin.users.view'
@@ -366,6 +369,12 @@ export const usePermissions = () => {
            ['Operations Director', 'Project Manager', 'Team Leader', 'HR Manager', 'General Manager', 'CEO'].includes(userRole);
   };
 
+  const canCreatePersonalTask = (): boolean => {
+    const userRole = (profile?.role as string) || '';
+    if (userRole === 'Admin' || userRole === 'Super Admin' || can('*')) return true;
+    return can('self_service.my_tasks.create') || checkPerm('my-tasks', 'create') || checkPerm('my_tasks', 'create');
+  };
+
   const canEditTask = (task: any, project: any): boolean => {
     if ((profile?.role as any) === 'Admin' || (profile?.role as any) === 'Super Admin' || can('*') || can('operations.tasks.view_all')) return true;
     if (!can('operations.tasks.edit')) return false;
@@ -513,6 +522,7 @@ export const usePermissions = () => {
     canDeleteProject,
     canViewTask,
     canCreateTask,
+    canCreatePersonalTask,
     canEditTask,
     canDeleteTask,
     canChangeTaskStatus,

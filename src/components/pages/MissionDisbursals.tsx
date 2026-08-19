@@ -118,15 +118,38 @@ export const MissionDisbursals: React.FC = () => {
   }, [selectedMonth]);
 
   // Calculate mission details for an employee in the selected month
+  const isMissionApprovedForDisbursal = (status?: string | null) => {
+    if (!status) return false;
+    const s = status.trim();
+    return ['Approved', 'Completed', 'Executed', 'معتمدة', 'مكتملة', 'مكتملة ومُقيّمة', 'منفذة'].includes(s);
+  };
+
   const getEmployeeMissionsInfo = (empId: string) => {
-    const empMissions = (missions || []).filter(m => 
-      m.employeeId === empId && 
-      m.status === 'Approved' && 
-      (m.startDate.startsWith(selectedMonth) || m.endDate.startsWith(selectedMonth))
-    );
+    // Filter approved / completed missions for this employee matching the selected entitlement month
+    const empMissions = (missions || []).filter(m => {
+      if (m.employeeId !== empId) return false;
+      if (!isMissionApprovedForDisbursal(m.status)) return false;
+      
+      const startMonth = m.startDate ? m.startDate.slice(0, 7) : '';
+      const endMonth = m.endDate ? m.endDate.slice(0, 7) : '';
+      return (
+        startMonth === selectedMonth || 
+        endMonth === selectedMonth || 
+        (startMonth && endMonth && startMonth <= selectedMonth && endMonth >= selectedMonth)
+      );
+    });
+
+    // Deduplicate missions by ID to strictly prevent any duplicate calculation
+    const uniqueMissionsMap = new Map<string, typeof empMissions[0]>();
+    empMissions.forEach(m => {
+      if (m.id && !uniqueMissionsMap.has(m.id)) {
+        uniqueMissionsMap.set(m.id, m);
+      }
+    });
+    const uniqueMissions = Array.from(uniqueMissionsMap.values());
 
     let totalAmount = 0;
-    const items = empMissions.map(m => {
+    const items = uniqueMissions.map(m => {
       const type = missionTypes.find(t => t.id === m.missionTypeId);
       const proj = projects.find(p => p.id === m.projectId);
       
@@ -152,6 +175,30 @@ export const MissionDisbursals: React.FC = () => {
             allowances = [];
           }
         }
+        // Also check if linked by projectId in missionTypes (Cost Matrix)
+        if ((!Array.isArray(allowances) || allowances.length === 0) && m.projectId) {
+          const linkedType = (missionTypes || []).find(t => {
+            let pIds: string[] = [];
+            try {
+              pIds = Array.isArray(t.projectIds) ? t.projectIds : (typeof t.projectIds === 'string' ? JSON.parse(t.projectIds) : []);
+            } catch (_) {}
+            return Array.isArray(pIds) && pIds.includes(m.projectId!);
+          });
+          if (linkedType?.allowances) {
+            try {
+              allowances = typeof linkedType.allowances === 'string' ? JSON.parse(linkedType.allowances) : linkedType.allowances;
+            } catch (_) {}
+          }
+        }
+        // Fallback to type.allowanceAmount if defined
+        if ((!Array.isArray(allowances) || allowances.length === 0) && type?.allowanceAmount && Number(type.allowanceAmount) > 0) {
+          allowances = [{
+            id: 'default_allowance',
+            name: type.name || t('بدل مأمورية'),
+            amount: Number(type.allowanceAmount),
+            type: 'Daily'
+          }];
+        }
       }
 
       let mTotal = 0;
@@ -161,7 +208,8 @@ export const MissionDisbursals: React.FC = () => {
         const lineTotal = isDaily ? amt * days : amt;
         mTotal += lineTotal;
         return {
-          name: a.name,
+          id: a.id || String(Math.random()),
+          name: a.name || t('بدل مأمورية'),
           rate: amt,
           type: isDaily ? 'Daily' : 'Once',
           total: lineTotal
@@ -175,6 +223,8 @@ export const MissionDisbursals: React.FC = () => {
         startDate: m.startDate,
         endDate: m.endDate,
         days,
+        status: m.status,
+        notes: m.notes,
         typeName: type?.name || t('مأمورية عمل'),
         projectName: proj?.name || t('غير مرتبط بمشروع'),
         total: mTotal,
@@ -183,7 +233,7 @@ export const MissionDisbursals: React.FC = () => {
     });
 
     return {
-      missionsCount: empMissions.length,
+      missionsCount: uniqueMissions.length,
       totalAmount,
       items
     };
@@ -754,25 +804,47 @@ export const MissionDisbursals: React.FC = () => {
                                     </h4>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                       {info.items.map((mission, mIdx) => (
-                                        <div key={mIdx} className="bg-white dark:bg-slate-900 p-4 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-sm">
-                                          <div className="flex justify-between items-start border-b border-slate-50 dark:border-slate-800/50 pb-2 mb-2">
+                                        <div key={mIdx} className="bg-white dark:bg-slate-900 p-4 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-sm space-y-2.5">
+                                          <div className="flex justify-between items-start border-b border-slate-50 dark:border-slate-800/50 pb-2">
                                             <div>
-                                              <p className="text-xs font-black text-slate-800 dark:text-slate-100">{mission.typeName}</p>
-                                              <p className="text-[10px] text-slate-400 font-bold tracking-tight">المشروع: {mission.projectName}</p>
+                                              <div className="flex items-center gap-2">
+                                                <p className="text-xs font-black text-slate-800 dark:text-slate-100">{mission.typeName}</p>
+                                                <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-[9px] font-mono text-slate-500 rounded">
+                                                  #{mission.id.slice(0, 8)}
+                                                </span>
+                                              </div>
+                                              <p className="text-[10px] text-slate-400 font-bold tracking-tight mt-0.5">
+                                                {t('المشروع')}: {mission.projectName}
+                                              </p>
                                             </div>
-                                            <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-md text-[10px] font-black text-slate-500 tabular-nums">{mission.days} أيام</span>
+                                            <div className="text-left space-y-0.5">
+                                              <span className="px-2 py-0.5 bg-teal-50 dark:bg-teal-950/40 text-teal-600 dark:text-teal-400 rounded-md text-[10px] font-black tabular-nums block">
+                                                {mission.days} {t('أيام')}
+                                              </span>
+                                              <span className="text-[9px] text-slate-400 font-bold block">
+                                                {mission.startDate} → {mission.endDate}
+                                              </span>
+                                            </div>
                                           </div>
-                                          <div className="space-y-1 text-xs">
+
+                                          <div className="space-y-1.5 text-xs">
                                             {mission.allowanceBreakdown.map((ab: any, abIdx: number) => (
-                                              <div key={abIdx} className="flex justify-between text-slate-500">
-                                                <span>{ab.name} {ab.type === 'Dailyt('? `(${ab.rate}/يوم)` :')(مقطوعة)'}</span>
-                                                <span className="font-extrabold text-slate-800 dark:text-slate-200 tabular-nums">{formatCurrency(ab.total)}</span>
+                                              <div key={abIdx} className="flex justify-between items-center text-slate-500 dark:text-slate-400">
+                                                <span>
+                                                  {ab.name} {ab.type === 'Daily' ? `(${formatCurrency(ab.rate)}/يوم)` : `(مقطوعة)`}
+                                                </span>
+                                                <span className="font-extrabold text-slate-800 dark:text-slate-200 tabular-nums">
+                                                  {formatCurrency(ab.total)}
+                                                </span>
                                               </div>
                                             ))}
                                           </div>
-                                          <div className="flex justify-between items-center border-t border-slate-50 dark:border-slate-800/30 pt-2 mt-2 text-xs">
-                                            <span className="font-extrabold text-slate-400">{t('الإجمالي:')}</span>
-                                            <span className="font-black text-teal-600 dark:text-teal-400 tabular-nums">{formatCurrency(mission.total)}</span>
+
+                                          <div className="flex justify-between items-center border-t border-slate-50 dark:border-slate-800/30 pt-2 text-xs">
+                                            <span className="font-extrabold text-slate-400">{t('إجمالي المستحق:')}</span>
+                                            <span className="font-black text-teal-600 dark:text-teal-400 tabular-nums">
+                                              {formatCurrency(mission.total)}
+                                            </span>
                                           </div>
                                         </div>
                                       ))}

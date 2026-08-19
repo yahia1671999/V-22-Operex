@@ -475,7 +475,9 @@ export const Attendance: React.FC = () => {
         const lastOut = sorted.find(r => r.type === 'Out') || [...sorted].reverse().find(r => r.type === 'Out');
 
         const isMission = monthMissions.some(m => dateStr >= m.startDate && dateStr <= m.endDate);
-        const isLeave = monthLeaves.some(l => dateStr >= l.startDate && dateStr <= l.endDate);
+        const matchingLeave = monthLeaves.find(l => dateStr >= l.startDate && dateStr <= l.endDate);
+        const isWfh = Boolean(matchingLeave && (matchingLeave.type === 'WorkFromHome' || matchingLeave.type === 'WFH' || matchingLeave.type === t('العمل من المنزل') || matchingLeave.type === 'Work From Home'));
+        const isLeave = Boolean(matchingLeave && !isWfh);
         const customAbsence = absenceRecords.find(a => a.employeeId === emp.id && a.date === dateStr);
 
         if (firstIn) {
@@ -507,6 +509,9 @@ export const Attendance: React.FC = () => {
           }
         } else if (isMission) {
           missionDays++;
+        } else if (isWfh) {
+          // أيام العمل من المنزل والعمل عن بعد المعتمدة: يوم عمل فعلي كامل ولا يعتبر غياباً
+          presentDays++;
         } else if (isLeave) {
           leaveDays++;
         } else if (customAbsence) {

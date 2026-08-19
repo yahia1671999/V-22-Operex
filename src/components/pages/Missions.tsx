@@ -878,14 +878,27 @@ export const Missions: React.FC = () => {
         {isMissionModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={handleCloseMissionModal} className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-card w-full max-w-md rounded-none shadow-2xl overflow-hidden border border-border">
-              <div className="p-8 border-b border-border bg-muted/30">
-                <h3 className="text-2xl font-black text-foreground">
-                  {editingMission ? t(t('تعديل بيانات المأمورية')) : t(t('تسجيل مأمورية جديدة'))}
-                </h3>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-card w-full max-w-xl max-h-[90vh] flex flex-col rounded-none shadow-2xl overflow-hidden border border-border">
+              <div className="p-6 sm:p-8 border-b border-border bg-muted/30 flex items-center justify-between shrink-0">
+                <div>
+                  <h3 className="text-xl sm:text-2xl font-black text-foreground">
+                    {editingMission ? t('تعديل بيانات المأمورية') : t('تسجيل مأمورية جديدة')}
+                  </h3>
+                  <p className="text-xs text-muted-foreground font-medium mt-1">
+                    {t('تسجيل بيانات المأمورية الرسمية والتكاليف والبدلات المستحقة')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseMissionModal}
+                  className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-none cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <form onSubmit={handleAddMission} className="p-8 space-y-6">
-                <div className="space-y-4">
+              <form onSubmit={handleAddMission} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="p-6 sm:p-8 space-y-6 overflow-y-auto flex-1 overscroll-contain">
+                  <div className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-sm font-bold text-muted-foreground mr-2">{t('الموظف')}</label>
                     <select
@@ -1157,12 +1170,13 @@ export const Missions: React.FC = () => {
                       onChange={(e) => setMissionForm({ ...missionForm, notes: e.target.value })}
                     />
                   </div>
+                  </div>
                 </div>
-                <div className="flex gap-4 pt-4">
-                  <button type="submit" className="flex-1 py-4 bg-primary text-primary-foreground font-black rounded-none transition-all shadow-lg shadow-primary/20">
-                    {editingMission ? t(t('حفظ التعديلات')) : t(t('حفظ المأمورية'))}
+                <div className="p-4 sm:p-6 border-t border-border bg-muted/20 flex gap-4 shrink-0 mt-auto">
+                  <button type="submit" className="flex-1 py-3.5 sm:py-4 bg-primary text-primary-foreground font-black rounded-none transition-all shadow-lg shadow-primary/20 hover:bg-primary/90">
+                    {editingMission ? t('حفظ التعديلات') : t('حفظ المأمورية')}
                   </button>
-                  <button type="button" onClick={handleCloseMissionModal} className="flex-1 py-4 bg-muted text-muted-foreground font-black rounded-none">{t('إلغاء')}</button>
+                  <button type="button" onClick={handleCloseMissionModal} className="flex-1 py-3.5 sm:py-4 bg-muted hover:bg-muted/80 text-muted-foreground font-black rounded-none transition-colors">{t('إلغاء')}</button>
                 </div>
               </form>
             </motion.div>
@@ -1175,14 +1189,27 @@ export const Missions: React.FC = () => {
         {isTypeModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={handleCloseTypeModal} className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-card w-full max-w-md rounded-none shadow-2xl overflow-hidden border border-border">
-              <div className="p-8 border-b border-border bg-muted/30">
-                <h3 className="text-2xl font-black text-foreground">
-                  {editingType ? t(t('تعديل مصفوفة التكاليف')) : t(t('إضافة نوع مأمورية'))}
-                </h3>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-card w-full max-w-xl max-h-[90vh] flex flex-col rounded-none shadow-2xl overflow-hidden border border-border">
+              <div className="p-6 sm:p-8 border-b border-border bg-muted/30 flex items-center justify-between shrink-0">
+                <div>
+                  <h3 className="text-xl sm:text-2xl font-black text-foreground">
+                    {editingType ? t('تعديل مصفوفة التكاليف') : t('إضافة نوع مأمورية')}
+                  </h3>
+                  <p className="text-xs text-muted-foreground font-medium mt-1">
+                    {t('إعداد نوع المأمورية والمشاريع المرتبطة والبدلات الافتراضية')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseTypeModal}
+                  className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-none cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <form onSubmit={handleAddType} className="p-8 space-y-6">
-                <div className="space-y-4">
+              <form onSubmit={handleAddType} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="p-6 sm:p-8 space-y-6 overflow-y-auto flex-1 overscroll-contain">
+                  <div className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-sm font-bold text-muted-foreground mr-2">{t('اسم النوع')}</label>
                     <input 
@@ -1287,10 +1314,11 @@ export const Missions: React.FC = () => {
                        ))}
                     </div>
                   </div>
+                  </div>
                 </div>
-                <div className="flex gap-4 pt-4">
-                  <button type="submit" className="flex-1 py-4 bg-primary text-primary-foreground font-black rounded-none transition-all shadow-lg shadow-primary/20">{t('حفظ النوع')}</button>
-                  <button type="button" onClick={handleCloseTypeModal} className="flex-1 py-4 bg-muted text-muted-foreground font-black rounded-none">{t('إلغاء')}</button>
+                <div className="p-4 sm:p-6 border-t border-border bg-muted/20 flex gap-4 shrink-0 mt-auto">
+                  <button type="submit" className="flex-1 py-3.5 sm:py-4 bg-primary text-primary-foreground font-black rounded-none transition-all shadow-lg shadow-primary/20 hover:bg-primary/90">{t('حفظ النوع')}</button>
+                  <button type="button" onClick={handleCloseTypeModal} className="flex-1 py-3.5 sm:py-4 bg-muted hover:bg-muted/80 text-muted-foreground font-black rounded-none transition-colors">{t('إلغاء')}</button>
                 </div>
               </form>
             </motion.div>

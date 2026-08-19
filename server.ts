@@ -5810,8 +5810,14 @@ async function getManagerAndSubordinateIds(reqUser: any) {
       const existingLines = await db.select().from(schema.missionAllowanceRunLines);
       const usedMissionIds = new Set(existingLines.map(line => line.missionId));
 
-      // Fetch approved, active missions & employees
-      const approvedMissions = await db.select().from(schema.missions).where(eq(schema.missions.status, 'Approved'));
+      // Fetch approved, active missions & employees (Approved, Completed, Executed)
+      const approvedMissions = await db.select().from(schema.missions).where(
+        or(
+          eq(schema.missions.status, 'Approved'),
+          eq(schema.missions.status, 'Completed'),
+          eq(schema.missions.status, 'Executed')
+        )
+      );
       const employeesList = await db.select().from(schema.employees);
 
       let totalEmployeesCount = 0;
@@ -6302,6 +6308,450 @@ async function getManagerAndSubordinateIds(reqUser: any) {
       res.json({ success: true, status: 'Locked' });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // =========================================================================
+  // SYNC APPROVED ALLOWANCES & DEDUCTIONS TO MONTHLY TRANSACTIONS
+  // =========================================================================
+  app.post("/api/transactions/sync-approved", authenticateJWT, async (req, res) => {
+    try {
+      const { month, employeeId } = req.body;
+      if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+        return res.status(400).json({ error: "يجب تحديد الشهر بالصيغة YYYY-MM" });
+      }
+
+      const hasPerm = matchUserPermission(req.user, 'dashboard_payroll', 'edit', req) ||
+                      matchUserPermission(req.user, 'payroll.runs', 'create', req) ||
+                      matchUserPermission(req.user, 'transactions', 'create', req) ||
+                      req.user?.role === 'Super Admin' || req.user?.role === 'Admin' || req.user?.role === 'Payroll Manager' || req.user?.role === 'HR';
+      if (!hasPerm) {
+        return res.status(403).json({ error: "لا تمتلك صلاحية ترحيل ومزامنة الحركات الشهرية" });
+      }
+
+      const [yearStr, monthStr] = month.split('-');
+      const year = parseInt(yearStr);
+      const mNumber = parseInt(monthStr);
+      const lastDay = new Date(year, mNumber, 0).getDate();
+
+      // Check if payroll run exists and is locked for this month
+      const existingLockedRun = await db.select().from(schema.payrollRuns).where(
+        and(
+          eq(schema.payrollRuns.month, month),
+          or(eq(schema.payrollRuns.status, 'Locked'), eq(schema.payrollRuns.status, 'Approved'))
+        )
+      );
+      if (existingLockedRun.length > 0) {
+        return res.status(400).json({ error: `مسير رواتب شهر ${month} مقفل أو معتمد بالفعل، لا يمكن تعديل الحركات الشهرية.` });
+      }
+
+      // Fetch settings for overtimeRate and delayHourlyRate
+      const settingsList = await db.select().from(schema.systemSettings);
+      const overtimeRate = settingsList[0]?.overtimeRate ?? 1.5;
+      const delayHourlyRate = settingsList[0]?.delayHourlyRate ?? 1.0;
+
+      // Load active employees (or specific employee)
+      let targetEmployees = [];
+      if (employeeId) {
+        targetEmployees = await db.select().from(schema.employees).where(eq(schema.employees.id, employeeId));
+        if (targetEmployees.length === 0) {
+          return res.status(404).json({ error: "الموظف المحدد غير موجود" });
+        }
+      } else {
+        targetEmployees = await db.select().from(schema.employees).where(
+          or(
+            eq(schema.employees.status, 'Active'),
+            eq(schema.employees.status, 'Leave'),
+            eq(schema.employees.status, 'نشط')
+          )
+        );
+      }
+
+      // Fetch master deduction types
+      const deductionTypesList = await db.select().from(schema.deductionTypes).where(eq(schema.deductionTypes.status, 'Active'));
+
+      // Fetch approved deduction transactions & their lines for this month
+      const dTrans = await db.select().from(schema.deductionTransactions).where(
+        and(
+          eq(schema.deductionTransactions.month, monthStr),
+          eq(schema.deductionTransactions.year, yearStr),
+          eq(schema.deductionTransactions.status, 'Approved')
+        )
+      );
+      const dTransIds = dTrans.map(t => t.id);
+      let approvedLines: any[] = [];
+      if (dTransIds.length > 0) {
+        const rawLines = await db.select().from(schema.deductionTransactionLines);
+        approvedLines = rawLines.filter(l => dTransIds.includes(l.transactionId));
+      }
+
+      // Fetch approved penalties for this month
+      const approvedPenalties = await db.select().from(schema.penalties).where(
+        eq(schema.penalties.status, 'Approved')
+      );
+      const monthPenalties = approvedPenalties.filter(p => 
+        p.targetMonth === month || (p.penaltyDate && p.penaltyDate.startsWith(month)) || (p.violationDate && p.violationDate.startsWith(month))
+      );
+
+      // Fetch approved/paid financial advances for this month
+      const allAdvances = await db.select().from(schema.financialAdvances);
+      const monthAdvances = allAdvances.filter(a => 
+        a.month === month && (a.status === 'Approved' || a.status === 'Paid' || a.status === 'معتمد' || a.status === 'مدفوع')
+      );
+
+      // Fetch leaves & missions & shifts & records for attendance calculations
+      const approvedLeaves = await db.select().from(schema.leaveRequests).where(eq(schema.leaveRequests.status, 'Approved'));
+      const approvedMissions = await db.select().from(schema.missions).where(eq(schema.missions.status, 'Approved'));
+      const shiftsList = await db.select().from(schema.attendanceShifts);
+      const allAttendance = await db.select().from(schema.attendanceRecords);
+
+      // Existing transactions for this month
+      const existingTransactions = await db.select().from(schema.transactions).where(eq(schema.transactions.month, month));
+      const txMap = new Map<string, any>();
+      existingTransactions.forEach(t => txMap.set(t.employeeId, t));
+
+      let createdCount = 0;
+      let updatedCount = 0;
+      const syncedResults = [];
+
+      for (const emp of targetEmployees) {
+        const existingTx = txMap.get(emp.id);
+        const shift = shiftsList.find(s => s.id === emp.shiftId) || shiftsList[0];
+
+        // Parse work days
+        let shiftWorkDays: number[] = [0, 1, 2, 3, 4];
+        if (shift && shift.workDays) {
+          try {
+            const parsed = typeof shift.workDays === 'string' ? JSON.parse(shift.workDays) : shift.workDays;
+            if (Array.isArray(parsed)) shiftWorkDays = parsed.map((d: any) => Number(d));
+          } catch(e) {}
+        }
+
+        // Calculate attendance, actual work days, unpaid leaves, unexcused absence
+        let autoAbsenceDays = 0;
+        let autoUnpaidLeaveDays = 0;
+        let actualWorkDays = 0;
+
+        const empAttendanceDates = new Set<string>();
+        allAttendance.forEach(a => {
+          if (a.employeeId === emp.id && a.timestamp && a.timestamp.startsWith(month)) {
+            empAttendanceDates.add(a.timestamp.substring(0, 10));
+          }
+        });
+
+        // Precompute annual leave entitlement & consumed vacation days map for this employee
+        const entitledVacationDays = Number(emp.leavePlan || 21);
+        const yearStrPrefix = String(year);
+        const empApprovedLeaves = approvedLeaves.filter(l => l.employeeId === emp.id);
+        const approvedVacationLeavesInYear = empApprovedLeaves
+          .filter(l => {
+            const lType = (l.type || '').toLowerCase();
+            const isVacationType = lType.includes('vacation') || lType.includes('annual') || (l.type || '').includes('اعتيادي') || (l.type || '').includes('اعتيادية');
+            return isVacationType && (l.startDate.startsWith(yearStrPrefix) || l.endDate.startsWith(yearStrPrefix));
+          })
+          .sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+        let cumulativeVacationDays = 0;
+        const vacationDaysWithBalance = new Set<string>();
+        const vacationDaysExceedingBalance = new Set<string>();
+
+        for (const vLeave of approvedVacationLeavesInYear) {
+          let curr = new Date(vLeave.startDate);
+          const end = new Date(vLeave.endDate);
+          while (curr <= end) {
+            const cStr = curr.toISOString().substring(0, 10);
+            if (cStr.startsWith(yearStrPrefix)) {
+              cumulativeVacationDays++;
+              if (cumulativeVacationDays <= entitledVacationDays) {
+                vacationDaysWithBalance.add(cStr);
+              } else {
+                vacationDaysExceedingBalance.add(cStr);
+              }
+            }
+            curr.setDate(curr.getDate() + 1);
+          }
+        }
+
+        for (let d = 1; d <= lastDay; d++) {
+          const dateStr = `${month}-${String(d).padStart(2, '0')}`;
+          const targetDate = new Date(dateStr);
+          const dayOfWeek = targetDate.getDay();
+          const isWorkDay = shiftWorkDays.includes(dayOfWeek);
+
+          // 1. Check for approved mission covering this day FIRST (priority)
+          const approvedMission = approvedMissions.find(m => m.employeeId === emp.id && m.startDate <= dateStr && m.endDate >= dateStr);
+          if (approvedMission) {
+            if (isWorkDay) actualWorkDays++;
+            continue; // Covered by mission: not absent, not deducted
+          }
+
+          // 2. Check for approved leave covering this day
+          const leave = empApprovedLeaves.find(l => {
+            let activeEndDate = l.endDate;
+            if (l.returnRequestStatus === 'Approved' && l.actualReturnDate) {
+              try {
+                const returnDate = new Date(l.actualReturnDate);
+                const dayBefore = new Date(returnDate.getTime() - 24 * 60 * 60 * 1000);
+                activeEndDate = dayBefore.toISOString().split('T')[0];
+              } catch (e) {
+                activeEndDate = l.endDate;
+              }
+            }
+            return l.startDate <= dateStr && activeEndDate >= dateStr;
+          });
+
+          if (leave) {
+            const lType = (leave.type || '').toLowerCase();
+            const isUnpaid = lType.includes('unpaid') || (leave.type || '').includes('غير مدفوعة') || (leave.type || '').includes('بلا راتب') || (leave.type || '').includes('دون راتب');
+            const isWfh = lType.includes('workfromhome') || lType.includes('wfh') || (leave.type || '').includes('من المنزل') || (leave.type || '').includes('عن بعد');
+            const isVacation = lType.includes('vacation') || lType.includes('annual') || (leave.type || '').includes('اعتيادي') || (leave.type || '').includes('اعتيادية');
+
+            if (isWfh) {
+              // عمل من المنزل / عن بعد: يوم عمل فعلي كامل، لا يحتسب غياب ولا يخصم
+              if (isWorkDay) actualWorkDays++;
+            } else if (isVacation) {
+              const hasSufficientBalance = !vacationDaysExceedingBalance.has(dateStr);
+              if (hasSufficientBalance) {
+                if (isWorkDay) actualWorkDays++;
+              } else {
+                if (isWorkDay) autoUnpaidLeaveDays++;
+              }
+            } else if (isUnpaid) {
+              if (isWorkDay) autoUnpaidLeaveDays++;
+            } else {
+              // إجازات مدفوعة أخرى
+              if (isWorkDay) actualWorkDays++;
+            }
+            continue;
+          }
+
+          // 3. Weekend / rest day: skip without absence
+          if (!isWorkDay) continue;
+
+          // 4. Regular scheduled shift work day
+          const hasAttendance = empAttendanceDates.has(dateStr);
+          const isNotSubject = emp.subjectToAttendance === 'No' || (emp as any).isSubjectToAttendance === false;
+
+          if (hasAttendance || isNotSubject) {
+            actualWorkDays++;
+          } else {
+            // Unexcused absence if subject to attendance
+            autoAbsenceDays++;
+          }
+        }
+
+        const basicSalary = Number(emp.basicSalary) || 0;
+        const housingAllowance = Number(emp.housingAllowance) || 0;
+        const transportAllowance = Number(emp.transportAllowance) || 0;
+        const subsistenceAllowance = Number(emp.subsistenceAllowance) || 0;
+        const otherAllowances = Number(emp.otherAllowances) || 0;
+        const mobileAllowance = Number(emp.mobileAllowance) || 0;
+        const managementAllowance = Number(emp.managementAllowance) || 0;
+        const dailyWorkHours = Number(emp.dailyWorkHours) || 8;
+
+        const grossBase = basicSalary + housingAllowance + transportAllowance + subsistenceAllowance + otherAllowances + mobileAllowance + managementAllowance;
+
+        // Absence days & deduction
+        const absenceDays = (existingTx && existingTx.absenceDays !== null && existingTx.absenceDays !== undefined)
+          ? Number(existingTx.absenceDays)
+          : autoAbsenceDays;
+        const absenceDeduction = Math.max(0, Number((((grossBase - housingAllowance) / 30) * absenceDays).toFixed(2)));
+
+        // Unpaid leave days & deduction
+        const unpaidLeaveDays = (existingTx && existingTx.unpaidLeaveDays !== null && existingTx.unpaidLeaveDays !== undefined)
+          ? Number(existingTx.unpaidLeaveDays)
+          : autoUnpaidLeaveDays;
+        const unpaidLeaveDeduction = Math.max(0, Number((((grossBase - housingAllowance) / 30) * unpaidLeaveDays).toFixed(2)));
+
+        // Overtime
+        const overtimeHours = existingTx ? (Number(existingTx.overtimeHours) || 0) : 0;
+        const overtimeValue = Number(((basicSalary / 30 / dailyWorkHours) * overtimeRate * overtimeHours).toFixed(2));
+
+        // Salary Increase & Other Income
+        const salaryIncrease = existingTx ? (Number(existingTx.salaryIncrease) || 0) : (Number(emp.salaryIncrease) || 0);
+        const otherIncome = existingTx ? (Number(existingTx.otherIncome) || 0) : 0;
+        const otherIncomeReason = existingTx?.otherIncomeReason || '';
+
+        // Mission Allowance
+        const missionAllowance = existingTx ? (Number(existingTx.missionAllowance) || 0) : 0;
+
+        // Total Income
+        const totalIncome = Number((grossBase + otherIncome + overtimeValue + salaryIncrease + missionAllowance).toFixed(2));
+
+        // --- CALCULATE APPROVED DEDUCTIONS ---
+        let calculatedSocialInsurance = 0;
+        let calculatedTax = 0;
+        let calculatedOtherDeductions = 0;
+
+        for (const dt of deductionTypesList) {
+          if (dt.category === 'تأمينات' && emp.subjectToSi === 'No') continue;
+          if ((dt.category === 'ضرائب' || dt.category === 'ضريبة كسب العمل') && (emp.subjectToTax === 'No' || emp.taxExempt === 'Yes')) continue;
+
+          let baseValue = 0;
+          if (dt.calculationMethod === 'مبلغ ثابت') {
+            baseValue = Number(dt.fixedAmount) || 0;
+          } else if (dt.calculationMethod === 'نسبة مئوية') {
+            baseValue = grossBase * ((Number(dt.percentage) || 0) / 100);
+          } else if (dt.calculationMethod === 'شرائح') {
+            let bracketList: any[] = [];
+            try {
+              bracketList = typeof dt.brackets === 'string' ? JSON.parse(dt.brackets) : (dt.brackets || []);
+            } catch(e) {}
+            const matched = Array.isArray(bracketList) ? bracketList.find(b => grossBase >= Number(b.from) && grossBase <= Number(b.to)) : null;
+            baseValue = matched ? grossBase * ((Number(matched.percentage) || 0) / 100) : 0;
+          } else if (dt.calculationMethod === 'معادلة') {
+            let eqStr = (dt.equation || '').toLowerCase();
+            eqStr = eqStr.replace(/basic salary/g, String(basicSalary));
+            eqStr = eqStr.replace(/allowances/g, String(grossBase - basicSalary));
+            eqStr = eqStr.replace(/taxable income/g, String(grossBase));
+            baseValue = Math.max(0, safeEvaluateArithmetic(eqStr));
+          }
+
+          let empVal = 0;
+          if (dt.chargeType === 'يتحمله الموظف بالكامل') {
+            empVal = baseValue;
+          } else if (dt.chargeType === 'تتمله الشركة بالكامل' || dt.chargeType === 'تتحمله الشركة بالكامل') {
+            empVal = 0;
+          } else if (dt.chargeType === 'مشاركة بين الموظف والشركة' || dt.chargeType === 'مشاركة') {
+            empVal = baseValue * ((Number(dt.employeePercentage) || 100) / 100);
+          }
+
+          if (dt.category === 'تأمينات' || dt.category?.includes('تأمين')) {
+            calculatedSocialInsurance += empVal;
+          } else if (dt.category === 'ضرائب' || dt.category === 'ضريبة كسب العمل' || dt.category?.includes('ضريب')) {
+            calculatedTax += empVal;
+          } else {
+            calculatedOtherDeductions += empVal;
+          }
+        }
+
+        // Approved Financial Advances / Loans
+        const empAdvances = monthAdvances.filter(a => a.employeeId === emp.id);
+        const approvedLoansSum = empAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+
+        // Approved Penalties
+        const empPenalties = monthPenalties.filter(p => p.employeeId === emp.id);
+        const approvedPenaltiesSum = empPenalties.reduce((sum, p) => {
+          let pType = p.penaltyType;
+          let dVal = Number(p.deductionValue) || 0;
+          if (p.hasGrievance && p.grievanceStatus === 'Accepted_Modified') {
+            pType = p.postGrievancePenaltyType || pType;
+            dVal = Number(p.postGrievanceDeductionValue) || dVal;
+          }
+          if (pType === 'Day Deduction' || p.deductionType === 'Days') {
+            return sum + Number(((basicSalary / 30) * dVal).toFixed(2));
+          } else if (pType === 'Amount Deduction' || p.deductionType === 'Amount') {
+            return sum + dVal;
+          }
+          return sum;
+        }, 0);
+
+        // Approved Deduction Transaction Lines
+        const empApprovedLines = approvedLines.filter(l => l.employeeId === emp.id);
+        const approvedLinesSum = empApprovedLines.reduce((sum, l) => sum + (Number(l.calculatedValue) || 0), 0);
+
+        // Delay deduction & deduction hours
+        const departureDelayDeduction = existingTx ? (Number(existingTx.departureDelayDeduction) || 0) : 0;
+        const deductionHours = existingTx ? (Number(existingTx.deductionHours) || 0) : 0;
+
+        // Final Deductions Consolidation
+        const finalSocialInsurance = Number(calculatedSocialInsurance.toFixed(2));
+        const finalTaxValue = Number(calculatedTax.toFixed(2));
+        const finalLoans = approvedLoansSum > 0 ? approvedLoansSum : (existingTx ? (Number(existingTx.loans) || 0) : 0);
+        const finalOtherDeductions = Number((calculatedOtherDeductions + approvedPenaltiesSum + approvedLinesSum).toFixed(2));
+
+        const totalDeductions = Number((
+          finalSocialInsurance +
+          finalTaxValue +
+          finalLoans +
+          finalOtherDeductions +
+          absenceDeduction +
+          unpaidLeaveDeduction +
+          departureDelayDeduction
+        ).toFixed(2));
+
+        const netSalary = Math.max(0, Number((totalIncome - totalDeductions).toFixed(2)));
+
+        const txRecord = {
+          employeeId: emp.id,
+          month,
+          actualWorkDays: actualWorkDays || 30,
+          basicSalary,
+          housingAllowance,
+          transportAllowance,
+          subsistenceAllowance,
+          otherAllowances,
+          mobileAllowance,
+          managementAllowance,
+          missionAllowance,
+          otherIncome,
+          otherIncomeReason,
+          overtimeHours,
+          overtimeValue,
+          totalIncome,
+          socialInsurance: finalSocialInsurance,
+          taxValue: finalTaxValue,
+          salaryReceived: existingTx ? (Number(existingTx.salaryReceived) || 0) : 0,
+          loans: finalLoans,
+          bankReceived: existingTx ? (Number(existingTx.bankReceived) || 0) : 0,
+          otherDeductions: finalOtherDeductions,
+          deductionHours,
+          departureDelayDeduction,
+          absenceDays,
+          absenceDeduction,
+          unpaidLeaveDays,
+          unpaidLeaveDeduction,
+          totalDeductions,
+          netSalary,
+          status: existingTx?.status || 'Draft',
+          salaryIncrease,
+          dailyWorkHours,
+          notes: existingTx?.notes || `تمت المزامنة الآلية للمستحقات والاستقطاعات المعتمدة بتاريخ ${new Date().toISOString().substring(0, 10)}`,
+          createdAt: existingTx?.createdAt || new Date().toISOString()
+        };
+
+        if (existingTx) {
+          await db.update(schema.transactions).set(txRecord).where(eq(schema.transactions.id, existingTx.id));
+          updatedCount++;
+        } else {
+          const newId = crypto.randomUUID();
+          await db.insert(schema.transactions).values({ ...txRecord, id: newId });
+          createdCount++;
+        }
+
+        syncedResults.push({
+          employeeId: emp.id,
+          employeeName: emp.name,
+          totalIncome,
+          totalDeductions,
+          netSalary,
+          loans: finalLoans,
+          penalties: approvedPenaltiesSum,
+          tax: finalTaxValue,
+          si: finalSocialInsurance
+        });
+      }
+
+      await logAuditRecord({
+        userId: req.user?.id,
+        action: 'sync_approved_allowances_and_deductions',
+        entityType: 'transactions',
+        entityId: month,
+        newValue: { month, createdCount, updatedCount, totalSynced: syncedResults.length },
+        req
+      });
+
+      res.json({
+        success: true,
+        month,
+        createdCount,
+        updatedCount,
+        totalCount: syncedResults.length,
+        syncedResults
+      });
+    } catch (error: any) {
+      console.error("[SYNC APPROVED ERROR]", error);
+      res.status(500).json({ error: `فشلت مزامنة المستحقات والاستقطاعات: ${error.message}` });
     }
   });
 
