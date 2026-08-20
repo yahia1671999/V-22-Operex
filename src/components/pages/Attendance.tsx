@@ -28,7 +28,8 @@ import {
   Check,
   FileText,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  HeartPulse
 } from 'lucide-react';
 import { db, collection, setDoc, doc, deleteDoc, updateDoc } from '../../api';
 import { useData } from '../../contexts/DataContext';
@@ -51,6 +52,12 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { formatTime12h, formatDateTime12h, createLocalTimestamp } from '../../utils/timeFormatter';
+import { MonthlyAttendanceDetailsModal } from '../attendance/MonthlyAttendanceDetailsModal';
+import { 
+  calculateEmployeeMonthlyAttendance, 
+  isMissionApproved, 
+  isLeaveApproved 
+} from '../../utils/monthlyAttendanceCalculation';
 
 export interface ParsedSheetRow {
   id: string;
@@ -89,6 +96,7 @@ export const Attendance: React.FC = () => {
     absenceTypes,
     leaveRequests,
     adminDepartments,
+    administrativeNotices,
     refreshData
   } = useData();
 
@@ -100,6 +108,8 @@ export const Attendance: React.FC = () => {
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isAbsenceTypeModalOpen, setIsAbsenceTypeModalOpen] = useState(false);
   const [isLeaveRequestModalOpen, setIsLeaveRequestModalOpen] = useState(false);
+  const [selectedMonthlyEmployee, setSelectedMonthlyEmployee] = useState<Employee | null>(null);
+  const [isMonthlyDetailsModalOpen, setIsMonthlyDetailsModalOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [reportDate, setReportDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -215,6 +225,36 @@ export const Attendance: React.FC = () => {
     };
   }, [leaveRequestForm.employeeId, employees, leaveRequests, leaveRequestForm.startDate, leaveRequestForm.endDate]);
 
+  const selectedEmployeeSickInfo = useMemo(() => {
+    if (!leaveRequestForm.employeeId) return null;
+    const employee = employees.find(e => e.id === leaveRequestForm.employeeId);
+    if (!employee) return null;
+
+    const entitled = Number(employee.sickLeavePlan || 30);
+    const currentYear = new Date().getFullYear();
+    const approvedList = leaveRequests.filter(lr => 
+      lr.employeeId === employee.id &&
+      lr.status === 'Approved' &&
+      (lr.type === 'Sick' || lr.type === 'مرضية' || lr.type === 'إجازة مرضية' || lr.type === t('إجازة مرضية') || lr.type === t('مرضية')) &&
+      (lr.startDate && lr.startDate.startsWith(String(currentYear)))
+    );
+
+    const consumed = approvedList.reduce((sum, lr) => {
+      const days = getDaysDifference(lr.startDate, lr.endDate);
+      return sum + days;
+    }, 0);
+
+    const requested = getDaysDifference(leaveRequestForm.startDate, leaveRequestForm.endDate);
+    const remaining = entitled - (consumed + requested);
+
+    return {
+      entitled,
+      requested,
+      consumed,
+      remaining
+    };
+  }, [leaveRequestForm.employeeId, employees, leaveRequests, leaveRequestForm.startDate, leaveRequestForm.endDate]);
+
   const handleAddLeaveRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     const id = crypto.randomUUID();
@@ -228,6 +268,21 @@ export const Attendance: React.FC = () => {
           entitled: selectedEmployeeInfo.entitled,
           consumed: selectedEmployeeInfo.consumed,
           remaining: selectedEmployeeInfo.entitled - selectedEmployeeInfo.consumed, // remaining before this request
+          requested: requestedDays
+        });
+        return; // Prevent submission
+      }
+    }
+
+    // Check sick leave balance before submission
+    if (leaveRequestForm.type === 'Sick' && leaveRequestForm.employeeId) {
+      const requestedDays = getDaysDifference(leaveRequestForm.startDate, leaveRequestForm.endDate);
+      if (selectedEmployeeSickInfo && selectedEmployeeSickInfo.remaining < 0) {
+        setBalanceAlert({
+          show: true,
+          entitled: selectedEmployeeSickInfo.entitled,
+          consumed: selectedEmployeeSickInfo.consumed,
+          remaining: selectedEmployeeSickInfo.entitled - selectedEmployeeSickInfo.consumed,
           requested: requestedDays
         });
         return; // Prevent submission
@@ -343,23 +398,23 @@ export const Attendance: React.FC = () => {
 
       // Check missions (ماموريات)
       const isMission = missions.some(m => 
-        m.employeeId === emp.id && 
-        m.status === 'Approved' &&
+        empCandidateIds.includes(String(m.employeeId || '').trim().toLowerCase()) && 
+        isMissionApproved(m.status) &&
         targetDateStr >= m.startDate && 
         targetDateStr <= m.endDate
       );
 
       // Check custom absence records
       const customAbsence = absenceRecords.find(a => 
-        a.employeeId === emp.id && 
+        empCandidateIds.includes(String(a.employeeId || '').trim().toLowerCase()) && 
         a.date === targetDateStr
       );
       const absenceType = customAbsence ? absenceTypes.find(at => at.id === customAbsence.absenceTypeId) : null;
 
       // Check approved leave requests
       const isLeave = leaveRequests.find(lr => 
-        lr.employeeId === emp.id && 
-        lr.status === 'Approved' && 
+        empCandidateIds.includes(String(lr.employeeId || '').trim().toLowerCase()) && 
+        isLeaveApproved(lr.status) && 
         targetDateStr >= lr.startDate && 
         targetDateStr <= lr.endDate
       );
@@ -397,10 +452,11 @@ export const Attendance: React.FC = () => {
       } else if (isMission) {
         status = 'Mission';
       } else if (isLeave) {
-        status = isLeave.type === 'Vacation' ? t('إجازة اعتيادية') : 
+        status = isLeave.type === 'Vacation' || isLeave.type === 'Annual' ? t('إجازة اعتيادية') : 
                  isLeave.type === 'Sick' ? t('إجازة مرضية') : 
                  isLeave.type === 'Unpaid' ? t('بدون مرتب') : 
                  isLeave.type === 'WorkFromHome' ? t('العمل من المنزل') :
+                 isLeave.type === 'OfficialHoliday' || isLeave.type === 'Official' || isLeave.type === 'إجازة رسمية' ? (isLeave.reason || t('إجازة رسمية')) :
                  isLeave.type === 'Permission' ? t('تصريح') : t('أخرى');
       } else if (absenceType) {
         status = absenceType.name;
@@ -418,125 +474,47 @@ export const Attendance: React.FC = () => {
         shiftName: shift?.name || t('بدون تقويم عمل')
       };
     });
-  }, [employees, attendanceRecords, attendanceShifts, reportDate, missions, absenceRecords, absenceTypes, leaveRequests]);
+  }, [employees, attendanceRecords, attendanceShifts, reportDate, missions, absenceRecords, absenceTypes, leaveRequests, t]);
 
   const monthlyReport = useMemo(() => {
     return employees.map(emp => {
-      const shift = attendanceShifts.find(s => s.id === emp.shiftId) || attendanceShifts[0];
-      const empCandidateIds = [emp.id, emp.employeeId, emp.userId, emp.email].filter(Boolean).map(x => String(x).trim().toLowerCase());
-      const monthRecords = attendanceRecords.filter(r => 
-        empCandidateIds.includes(String(r.employeeId || '').trim().toLowerCase()) && 
-        r.timestamp.startsWith(reportMonth)
-      );
-
-      const monthMissions = missions.filter(m => 
-        m.employeeId === emp.id && 
-        m.status === 'Approved' &&
-        (m.startDate.startsWith(reportMonth) || m.endDate.startsWith(reportMonth))
-      );
-
-      const monthLeaves = leaveRequests.filter(l => 
-        l.employeeId === emp.id && 
-        l.status === 'Approved' &&
-        (l.startDate.startsWith(reportMonth) || l.endDate.startsWith(reportMonth))
-      );
-
-      // Group records by day
-      const daysInMonth = monthRecords.reduce((acc, r) => {
-        const day = r.timestamp.split('T')[0];
-        if (!acc[day]) acc[day] = [];
-        acc[day].push(r);
-        return acc;
-      }, {} as Record<string, AttendanceRecord[]>);
-
-      let totalDelay = 0;
-      let totalOvertime = 0;
-      let presentDays = 0;
-      let lateDays = 0;
-      let missionDays = 0;
-      let absentDays = 0;
-      let leaveDays = 0;
-
-      const year = parseInt(reportMonth.split('-')[0]);
-      const month = parseInt(reportMonth.split('-')[1]);
-      const lastDay = new Date(year, month, 0).getDate();
-
-      for (let d = 1; d <= lastDay; d++) {
-        const dateStr = `${reportMonth}-${String(d).padStart(2, '0')}`;
-        const targetDate = new Date(dateStr);
-        const dayOfWeek = getDay(targetDate);
-        const isWorkDay = shift?.workDays.includes(dayOfWeek);
-
-        if (!isWorkDay) continue;
-
-        const records = daysInMonth[dateStr] || [];
-        const sorted = records.sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        const firstIn = sorted.find(r => r.type === 'In');
-        const lastOut = sorted.find(r => r.type === 'Out') || [...sorted].reverse().find(r => r.type === 'Out');
-
-        const isMission = monthMissions.some(m => dateStr >= m.startDate && dateStr <= m.endDate);
-        const matchingLeave = monthLeaves.find(l => dateStr >= l.startDate && dateStr <= l.endDate);
-        const isWfh = Boolean(matchingLeave && (matchingLeave.type === 'WorkFromHome' || matchingLeave.type === 'WFH' || matchingLeave.type === t('العمل من المنزل') || matchingLeave.type === 'Work From Home'));
-        const isLeave = Boolean(matchingLeave && !isWfh);
-        const customAbsence = absenceRecords.find(a => a.employeeId === emp.id && a.date === dateStr);
-
-        if (firstIn) {
-          presentDays++;
-          if (shift) {
-            const shiftStart = parse(shift.startTime, 'HH:mm', targetDate);
-            const actualIn = new Date(firstIn.timestamp);
-            const graceThreshold = addMinutes(shiftStart, shift.graceMinutes);
-            
-            if (isAfter(actualIn, graceThreshold)) {
-              totalDelay += Math.floor((actualIn.getTime() - shiftStart.getTime()) / (1000 * 60));
-              lateDays++;
-            }
-
-            if (lastOut) {
-              const shiftEnd = parse(shift.endTime, 'HH:mm', targetDate);
-              const actualOut = new Date(lastOut.timestamp);
-              if (isAfter(actualOut, shiftEnd)) {
-                totalOvertime += Math.floor((actualOut.getTime() - shiftEnd.getTime()) / (1000 * 60));
-              }
-            }
-          } else if (lastOut) {
-            const actualIn = new Date(firstIn.timestamp);
-            const actualOut = new Date(lastOut.timestamp);
-            const workedMins = Math.floor((actualOut.getTime() - actualIn.getTime()) / (1000 * 60));
-            if (workedMins > 480) {
-              totalOvertime += (workedMins - 480);
-            }
-          }
-        } else if (isMission) {
-          missionDays++;
-        } else if (isWfh) {
-          // أيام العمل من المنزل والعمل عن بعد المعتمدة: يوم عمل فعلي كامل ولا يعتبر غياباً
-          presentDays++;
-        } else if (isLeave) {
-          leaveDays++;
-        } else if (customAbsence) {
-          const type = absenceTypes.find(at => at.id === customAbsence.absenceTypeId);
-          if (type && type.deductionRatio > 0) {
-            absentDays += type.deductionRatio;
-          }
-        } else {
-          absentDays++;
-        }
-      }
+      const { stats } = calculateEmployeeMonthlyAttendance({
+        employee: emp,
+        month: reportMonth,
+        attendanceRecords,
+        attendanceShifts,
+        missions,
+        leaveRequests,
+        absenceRecords,
+        absenceTypes,
+        administrativeNotices,
+        language
+      });
 
       return {
         ...emp,
-        presentDays,
-        lateDays,
-        missionDays,
-        leaveDays,
-        absentDays,
-        totalDelay,
-        totalOvertime,
-        shiftName: shift?.name || t('بدون تقويم عمل')
+        presentDays: stats.presentCount,
+        lateDays: stats.lateCount,
+        missionDays: stats.missionCount,
+        leaveDays: stats.leaveCount,
+        absentDays: stats.absentCount,
+        totalDelay: stats.totalDelayMins,
+        totalOvertime: stats.totalOvertimeMins,
+        shiftName: stats.shiftName
       };
     });
-  }, [employees, attendanceRecords, attendanceShifts, reportMonth, missions, absenceRecords, absenceTypes, leaveRequests]);
+  }, [
+    employees, 
+    attendanceRecords, 
+    attendanceShifts, 
+    reportMonth, 
+    missions, 
+    absenceRecords, 
+    absenceTypes, 
+    leaveRequests, 
+    administrativeNotices, 
+    language
+  ]);
 
   const handleAddManualRecord = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1178,6 +1156,7 @@ export const Attendance: React.FC = () => {
                         <th className="px-8 py-5">{t('وقت الانصراف')}</th>
                         <th className="px-8 py-5">{t('التأخير (دقيقة)')}</th>
                         <th className="px-8 py-5">{t('الساعات الإضافية')}</th>
+                        <th className="px-8 py-5">{t('تقويم العمل')}</th>
                       </>
                     ) : (
                       <>
@@ -1187,9 +1166,10 @@ export const Attendance: React.FC = () => {
                         <th className="px-8 py-5">{t('أيام المأموريات')}</th>
                         <th className="px-8 py-5">{t('الإجازات والتصاريح')}</th>
                         <th className="px-8 py-5">{t('أيام الغياب')}</th>
+                        <th className="px-8 py-5">{t('تقويم العمل')}</th>
+                        <th className="px-8 py-5 text-center">{t('التفاصيل')}</th>
                       </>
                     )}
-                    <th className="px-8 py-5">{t('تقويم العمل')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -1271,6 +1251,20 @@ export const Attendance: React.FC = () => {
                         <td className="px-8 py-5 font-bold text-primary">{row.leaveDays} يوم</td>
                         <td className="px-8 py-5 font-bold text-destructive">{row.absentDays} يوم</td>
                         <td className="px-8 py-5 text-[10px] font-black text-muted-foreground uppercase opacity-70">{row.shiftName}</td>
+                        <td className="px-8 py-5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedMonthlyEmployee(row);
+                              setIsMonthlyDetailsModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:hover:bg-teal-900/50 dark:text-teal-300 rounded-lg text-xs font-black transition-all border border-teal-200/60 dark:border-teal-800/60 shadow-xs active:scale-95 cursor-pointer"
+                            title={t('عرض تفاصيل الحضور اليومية لهذا الموظف')}
+                          >
+                            <CalendarDays className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                            <span>{t('تفاصيل')}</span>
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}
@@ -1323,10 +1317,11 @@ export const Attendance: React.FC = () => {
                          <td className="md:px-8 md:py-5 flex md:table-cell flex-col mb-2 md:mb-0">
                             <span className="md:hidden text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">{t('النوع/السبب')}</span>
                             <span className="font-black text-primary bg-primary/10 px-2 py-0.5 rounded-none border border-primary/20 w-fit text-[10px] uppercase tracking-tighter border-primary/20">
-                              {request.type === 'Vacation' ? t('إجازة اعتيادية') : 
+                              {request.type === 'Vacation' || request.type === 'Annual' ? t('إجازة اعتيادية') : 
                                request.type === 'Sick' ? t('إجازة مرضية') : 
                                request.type === 'Unpaid' ? t('بدون مرتب') : 
                                request.type === 'WorkFromHome' ? t('العمل من المنزل') :
+                               request.type === 'OfficialHoliday' || request.type === 'Official' || request.type === 'إجازة رسمية' ? t('إجازة رسمية') :
                                request.type === 'Permission' ? t('تصريح مغادرة/تأخير') : t('أخرى')}
                             </span>
                             <p className="text-[10px] font-medium text-muted-foreground mt-1 italic">"{request.reason}"</p>
@@ -1839,42 +1834,42 @@ export const Attendance: React.FC = () => {
               <motion.div 
                 layout
                 key={shift.id}
-                className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm relative group overflow-hidden"
+                className="bg-card text-foreground p-6 rounded-[2.5rem] border border-border shadow-sm relative group overflow-hidden"
               >
-                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50/30 rounded-full -translate-y-16 translate-x-16 -z-0" />
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full -translate-y-16 translate-x-16 -z-0" />
                 
                 <div className="relative z-10 space-y-4">
                   <div className="flex justify-between items-start">
-                    <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400 group-hover:bg-emerald-50 group-hover:text-emerald-600 transition-colors">
+                    <div className="w-12 h-12 bg-muted rounded-2xl flex items-center justify-center text-muted-foreground group-hover:bg-emerald-500/10 group-hover:text-emerald-500 transition-colors">
                       <CalendarDays className="w-6 h-6" />
                     </div>
                     <button 
                       onClick={() => setDeleteConfirm({ id: shift.id, type: 'shift', show: true })}
-                      className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                      className="p-2 text-destructive/70 hover:text-destructive hover:bg-destructive/10 rounded-xl transition-all"
                     >
                       <Trash2 className="w-5 h-5" />
                     </button>
                   </div>
 
                   <div>
-                     <h3 className="text-lg font-black text-gray-900">{shift.name}</h3>
+                     <h3 className="text-lg font-black text-foreground">{shift.name}</h3>
                      <div className="flex items-center gap-3 mt-2">
-                        <span className="px-3 py-1 bg-blue-50 text-blue-600 rounded-lg text-xs font-black">
+                        <span className="px-3 py-1 bg-primary/10 text-primary rounded-lg text-xs font-black">
                            {formatTime12h(shift.startTime, language)} - {formatTime12h(shift.endTime, language)}
                         </span>
-                        <span className="text-xs font-bold text-gray-400">
+                        <span className="text-xs font-bold text-muted-foreground">
                            فترة سماح: {shift.graceMinutes} دقيقة
                         </span>
                      </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-1 pt-4 border-t border-gray-50">
+                  <div className="flex flex-wrap gap-1 pt-4 border-t border-border">
                     {[t('ح'), t('ن'), t('ث'), t('ر'), t('خ'), t('ج'), t('س')].map((day, i) => (
                       <div 
                         key={i}
                         className={cn(
                           "w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-black transition-all",
-                          shift.workDays.includes(i) ? "bg-emerald-600 text-white shadow-sm shadow-emerald-200" : "bg-gray-50 text-gray-300"
+                          shift.workDays.includes(i) ? "bg-emerald-600 text-white shadow-sm shadow-emerald-200" : "bg-muted text-muted-foreground"
                         )}
                       >
                         {day}
@@ -1887,9 +1882,9 @@ export const Attendance: React.FC = () => {
 
             <button 
               onClick={() => setIsShiftModalOpen(true)}
-              className="border-2 border-dashed border-gray-200 rounded-[2.5rem] flex flex-col items-center justify-center py-12 gap-4 text-gray-400 hover:border-blue-300 hover:text-blue-500 transition-all group p-6"
+              className="border-2 border-dashed border-border rounded-[2.5rem] flex flex-col items-center justify-center py-12 gap-4 text-muted-foreground hover:border-primary hover:text-primary transition-all group p-6 bg-card/50"
             >
-              <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center group-hover:bg-blue-50 transition-colors">
+              <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center group-hover:bg-primary/10 transition-colors">
                  <Plus className="w-8 h-8" />
               </div>
               <p className="font-black">{t('إضافة تقويم عمل جديد')}</p>
@@ -1905,26 +1900,26 @@ export const Attendance: React.FC = () => {
               <motion.div 
                 layout
                 key={type.id}
-                className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm relative group overflow-hidden"
+                className="bg-card text-foreground p-6 rounded-[2.5rem] border border-border shadow-sm relative group overflow-hidden"
               >
-                <div className="absolute top-0 right-0 w-32 h-32 bg-orange-50/30 rounded-full -translate-y-16 translate-x-16 -z-0" />
+                <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full -translate-y-16 translate-x-16 -z-0" />
                 
                 <div className="relative z-10 space-y-4">
                   <div className="flex justify-between items-start">
-                    <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400 group-hover:bg-orange-50 group-hover:text-orange-600 transition-colors">
+                    <div className="w-12 h-12 bg-muted rounded-2xl flex items-center justify-center text-muted-foreground group-hover:bg-amber-500/10 group-hover:text-amber-500 transition-colors">
                       <Filter className="w-6 h-6" />
                     </div>
                     <button 
                       onClick={() => setDeleteConfirm({ id: type.id, type: 'absenceType', show: true })}
-                      className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                      className="p-2 text-destructive/70 hover:text-destructive hover:bg-destructive/10 rounded-xl transition-all"
                     >
                       <Trash2 className="w-5 h-5" />
                     </button>
                   </div>
 
                   <div>
-                     <h3 className="text-lg font-black text-gray-900">{type.name}</h3>
-                     <p className="text-sm font-bold text-gray-400">نسبة الخصم من اليوم: {type.deductionRatio * 100}%</p>
+                     <h3 className="text-lg font-black text-foreground">{type.name}</h3>
+                     <p className="text-sm font-bold text-muted-foreground">نسبة الخصم من اليوم: {type.deductionRatio * 100}%</p>
                   </div>
                 </div>
               </motion.div>
@@ -1932,9 +1927,9 @@ export const Attendance: React.FC = () => {
 
             <button 
               onClick={() => setIsAbsenceTypeModalOpen(true)}
-              className="border-2 border-dashed border-gray-200 rounded-[2.5rem] flex flex-col items-center justify-center py-12 gap-4 text-gray-400 hover:border-blue-300 hover:text-blue-500 transition-all group p-6"
+              className="border-2 border-dashed border-border rounded-[2.5rem] flex flex-col items-center justify-center py-12 gap-4 text-muted-foreground hover:border-primary hover:text-primary transition-all group p-6 bg-card/50"
             >
-              <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center group-hover:bg-blue-50 transition-colors">
+              <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center group-hover:bg-primary/10 transition-colors">
                  <Plus className="w-8 h-8" />
               </div>
               <p className="font-black">{t('إضافة نوع غياب جديد')}</p>
@@ -1950,36 +1945,36 @@ export const Attendance: React.FC = () => {
               <motion.div 
                 layout
                 key={device.id}
-                className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm relative group overflow-hidden"
+                className="bg-card text-foreground p-6 rounded-[2.5rem] border border-border shadow-sm relative group overflow-hidden"
               >
-                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50/30 rounded-full -translate-y-16 translate-x-16 -z-0" />
+                <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full -translate-y-16 translate-x-16 -z-0" />
                 
                 <div className="relative z-10 space-y-4">
                   <div className="flex justify-between items-start">
-                    <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
+                    <div className="w-12 h-12 bg-muted rounded-2xl flex items-center justify-center text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary transition-colors">
                       <Monitor className="w-6 h-6" />
                     </div>
                     <div className={cn(
                       "px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase",
-                      device.status === 'Online' ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"
+                      device.status === 'Online' ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-destructive/10 text-destructive"
                     )}>
                       {device.status}
                     </div>
                   </div>
 
                   <div>
-                     <h3 className="text-lg font-black text-gray-900">{device.name}</h3>
-                     <p className="text-sm font-mono text-gray-400">{device.ipAddress}:{device.port}</p>
+                     <h3 className="text-lg font-black text-foreground">{device.name}</h3>
+                     <p className="text-sm font-mono text-muted-foreground">{device.ipAddress}:{device.port}</p>
                   </div>
 
-                  <div className="flex items-center justify-between pt-4 border-t border-gray-50">
-                    <div className="text-[10px] font-bold text-gray-400">
+                  <div className="flex items-center justify-between pt-4 border-t border-border">
+                    <div className="text-[10px] font-bold text-muted-foreground">
                        آخر مزامنة: {device.lastSync ? formatDateTime12h(device.lastSync, { lang: language }) : t('لم تتم بعد')}
                     </div>
                     <button 
                       onClick={() => handleSync(device)}
                       disabled={isSyncing}
-                      className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-all disabled:opacity-50"
+                      className="p-2 bg-primary/10 text-primary rounded-xl hover:bg-primary/20 transition-all disabled:opacity-50"
                     >
                       <RefreshCw className={cn("w-5 h-5", isSyncing && "animate-spin")} />
                     </button>
@@ -1990,9 +1985,9 @@ export const Attendance: React.FC = () => {
 
             <button 
               onClick={() => setIsDeviceModalOpen(true)}
-              className="border-2 border-dashed border-gray-200 rounded-[2.5rem] flex flex-col items-center justify-center py-12 gap-4 text-gray-400 hover:border-blue-300 hover:text-blue-500 transition-all group p-6"
+              className="border-2 border-dashed border-border rounded-[2.5rem] flex flex-col items-center justify-center py-12 gap-4 text-muted-foreground hover:border-primary hover:text-primary transition-all group p-6 bg-card/50"
             >
-              <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center group-hover:bg-blue-50 transition-colors">
+              <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center group-hover:bg-primary/10 transition-colors">
                  <Plus className="w-8 h-8" />
               </div>
               <p className="font-black">{t('إضافة جهاز بصمة جديد')}</p>
@@ -2506,11 +2501,56 @@ export const Attendance: React.FC = () => {
                     </div>
                   )}
 
+                  {leaveRequestForm.type === 'Sick' && selectedEmployeeSickInfo && (
+                    <div className="p-5 bg-card border-2 border-blue-500/30 rounded-xl text-right text-xs text-foreground space-y-3 font-semibold shadow-inner">
+                      <div className="flex items-center justify-between border-b border-border pb-1.5">
+                        <p className="font-black text-sm text-blue-600 flex items-center gap-1.5">
+                          <HeartPulse className="w-4 h-4 text-blue-600" />
+                          {t('🩺 تفاصيل رصيد الإجازة المرضية السنوية:')}
+                        </p>
+                        <span className="text-[10px] text-muted-foreground">{t('تجديد سنوي: 1 يناير')}</span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center bg-muted/40 p-2.5 border border-border/60">
+                        <span className="text-muted-foreground font-bold">{t('1. الرصيد الإجمالي المستحق (من ملف الموظف):')}</span>
+                        <span className="font-extrabold text-foreground text-sm">{selectedEmployeeSickInfo.entitled} يوم</span>
+                      </div>
+
+                      <div className="flex justify-between items-center bg-blue-500/5 p-2.5 border border-blue-500/10">
+                        <span className="text-blue-700 dark:text-blue-400 font-extrabold">{t('2. الأيام المطلوبة (لهذا الطلب حالياً):')}</span>
+                        <span className="font-extrabold text-blue-600 text-sm">{selectedEmployeeSickInfo.requested} يوم</span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center bg-red-500/5 p-2.5 border border-red-500/10">
+                        <span className="text-red-700 dark:text-red-400 font-extrabold">{t('3. الرصيد المستهلك سابقاً (الإجازات المرضية المعتمدة):')}</span>
+                        <span className="font-extrabold text-red-600 text-sm">{selectedEmployeeSickInfo.consumed} يوم</span>
+                      </div>
+
+                      <div className="flex justify-between items-center bg-emerald-500/10 text-emerald-950 dark:text-emerald-50 p-3 border-2 border-emerald-500/20 rounded-lg">
+                        <span className="font-black">{t('4. الرصيد المرضي المتاح المتبقي (الصافي بعد الخصم):')}</span>
+                        <span className={cn(
+                          "text-base font-black px-2 py-0.5 rounded",
+                          selectedEmployeeSickInfo.remaining >= 0 ? "text-emerald-600 font-extrabold" : "text-destructive font-extrabold bg-destructive/10 animate-pulse"
+                        )}>
+                          {selectedEmployeeSickInfo.remaining} يوم
+                        </span>
+                      </div>
+
+                      <p className="text-[10px] text-muted-foreground bg-muted/30 p-2 border border-border">
+                        {t('ℹ️ الإجازة المرضية المعتمدة تخصم من الرصيد المرضي فقط ولا تخصم من رصيد الإجازة الاعتيادية.')}
+                      </p>
+                    </div>
+                  )}
+
                   {balanceAlert && (
                     <div className="p-5 bg-red-600 text-white rounded-2xl text-right text-sm space-y-3 font-semibold shadow-md">
                       <div className="flex items-center gap-2 font-black text-white">
                         <XCircle className="w-5 h-5 flex-shrink-0 animate-bounce" />
-                        <span>{t('تنبيه: لا يوجد رصيد إجازة سنوية كافٍ لإتمام طلبك!')}</span>
+                        <span>
+                          {leaveRequestForm.type === 'Sick'
+                            ? t('تنبيه: لا يوجد رصيد إجازة مرضية كافٍ لإتمام طلبك!')
+                            : t('تنبيه: لا يوجد رصيد إجازة سنوية كافٍ لإتمام طلبك!')}
+                        </span>
                       </div>
                       <p className="text-xs text-white/90 leading-relaxed">{t('عذراً، الرصيد المتبقي المتاح لك هو')}<span className="font-extrabold underline">{balanceAlert.remaining}</span>{t('يوم فقط، بينما المدة المطلوبة الحالية هي')}<span className="font-extrabold underline">{balanceAlert.requested}</span>{t('يوم.')}</p>
                       <p className="text-xs text-white/90 font-bold">{t('يرجى تغيير نوع الإجازة أو تقليص عدد الأيام ثم إعادة محاولة الإرسال.')}</p>
@@ -2543,6 +2583,24 @@ export const Attendance: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      <MonthlyAttendanceDetailsModal
+        isOpen={isMonthlyDetailsModalOpen}
+        onClose={() => {
+          setIsMonthlyDetailsModalOpen(false);
+          setSelectedMonthlyEmployee(null);
+        }}
+        employee={selectedMonthlyEmployee}
+        month={reportMonth}
+        attendanceRecords={attendanceRecords}
+        attendanceShifts={attendanceShifts}
+        missions={missions}
+        leaveRequests={leaveRequests}
+        absenceRecords={absenceRecords}
+        absenceTypes={absenceTypes}
+        administrativeNotices={administrativeNotices}
+      />
+
       <ConfirmDialog
         isOpen={deleteConfirm.show}
         onClose={() => setDeleteConfirm({ ...deleteConfirm, show: false })}

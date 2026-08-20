@@ -4050,6 +4050,112 @@ async function startServer() {
     }
   });
 
+  // 9d. Bulk Create Official Holiday for all employees subject to attendance
+  app.post("/api/leave-requests/official-holiday", authenticateJWT, async (req, res) => {
+    try {
+      const userRole = req.user?.role || 'Viewer';
+      const hasHrPerm = matchUserPermission(req.user, 'hr.leaves', 'create', req) || matchUserPermission(req.user, 'hr.leaves', 'approve', req);
+      const isAdmin = (userRole === 'Admin' || userRole === 'Super Admin' || userRole === 'HR Manager');
+
+      if (!isAdmin && !hasHrPerm) {
+        return res.status(403).json({ error: "غير مصرح لك بإضافة إجازة رسمية. مطلوب صلاحيات مسؤول الموارد البشرية أو أدمن." });
+      }
+
+      const { name, startDate, endDate, notes } = req.body;
+      if (!name || !startDate || !endDate) {
+        return res.status(400).json({ error: "يرجى تعبئة اسم الإجازة وتاريخ البداية والنهاية." });
+      }
+
+      // Calculate days count
+      let daysCount = 1;
+      try {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        daysCount = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+      } catch (e) {
+        daysCount = 1;
+      }
+
+      // Get all employees
+      const allEmployees = await db.select().from(schema.employees);
+      // Filter employees subject to attendance (on-site, remote, hybrid - where subjectToAttendance !== 'No')
+      const eligibleEmployees = allEmployees.filter(emp => {
+        const sub = String(emp.subjectToAttendance || '').trim().toLowerCase();
+        return sub !== 'no' && sub !== 'لا';
+      });
+
+      const nowIso = new Date().toISOString();
+      const holidayReason = name.trim() + (notes ? ` - ${notes.trim()}` : '');
+      const reviewNoteText = notes?.trim() || 'إجازة رسمية مدفوعة الأجر معتمدة تلقائياً لجميع الموظفين';
+
+      // Insert leave requests for eligible employees
+      for (const emp of eligibleEmployees) {
+        const leaveId = crypto.randomUUID();
+        const leaveData = {
+          id: leaveId,
+          employeeId: emp.id,
+          managerId: req.user?.id || null,
+          startDate,
+          endDate,
+          daysCount,
+          type: 'OfficialHoliday',
+          reason: holidayReason,
+          status: 'Approved',
+          reviewNote: reviewNoteText,
+          createdAt: nowIso,
+          updatedAt: nowIso
+        };
+        await db.insert(schema.leaveRequests).values(leaveData);
+      }
+
+      // Also publish an administrative notice for official holiday announcement
+      const noticeId = crypto.randomUUID();
+      const noticeContent = `<div class="holiday-announcement"><p class="text-base font-bold text-foreground">تعلن إدارة الموارد البشرية عن اعتماد <strong>${name.trim()}</strong> كإجازة رسمية مدفوعة الأجر لكافة منسوبي الشركة الخاضعين للحضور والانصراف.</p><p class="mt-2 text-sm"><strong>الفترة:</strong> من <strong>${startDate}</strong> حتى <strong>${endDate}</strong> (إجمالي ${daysCount} يوم).</p>${notes?.trim() ? `<p class="mt-2 text-sm text-muted-foreground"><em>ملاحظات: ${notes.trim()}</em></p>` : ''}<p class="mt-3 text-xs text-muted-foreground font-semibold">إجازة رسمية معتمدة ومدفوعة الأجر بالكامل ولا تُحسب غياباً أو استقطاعاً.</p></div>`;
+
+      await db.insert(schema.administrativeNotices).values({
+        id: noticeId,
+        title: `إجازة رسمية: ${name.trim()}`,
+        content: noticeContent,
+        noticeDate: startDate,
+        startDate: startDate,
+        endDate: endDate,
+        durationDays: daysCount,
+        isPermanent: false,
+        priority: 'high',
+        category: 'decision',
+        targetAudience: JSON.stringify(['all']),
+        createdByName: req.user?.email || 'إدارة الموارد البشرية',
+        status: 'Published',
+        createdAt: nowIso,
+        updatedAt: nowIso
+      });
+
+      await logSecurityEvent({
+        userId: req.user?.id,
+        userName: req.user?.email,
+        action: 'create_official_holiday',
+        entity: 'leave-requests',
+        entityId: noticeId,
+        details: { 
+          name, 
+          startDate, 
+          endDate, 
+          employeesCount: eligibleEmployees.length, 
+          ip: getClientIp(req) 
+        }
+      });
+
+      res.json({
+        success: true,
+        count: eligibleEmployees.length,
+        message: `تم تطبيق الإجازة الرسمية (${name}) بنجاح على ${eligibleEmployees.length} موظفاً وتوثيقها بالقرارات الإدارية.`
+      });
+    } catch (err: any) {
+      console.error("Error creating official holiday:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // 10. Post Mission Request (Scope validation)
   app.post(["/api/missions", "/api/mission-requests"], authenticateJWT, async (req, res) => {
     try {

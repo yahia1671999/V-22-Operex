@@ -9,7 +9,12 @@ import {
   Filter,
   User,
   Trash2,
-  X
+  X,
+  Sparkles,
+  Plus,
+  Building2,
+  CalendarPlus,
+  Info
 } from 'lucide-react';
 import { db, collection, setDoc, doc, deleteDoc } from '../../api';
 import { useData } from '../../contexts/DataContext';
@@ -38,10 +43,79 @@ export const Leaves: React.FC = () => {
   const [actualReturnDate, setActualReturnDate] = useState('');
   const [returnNotes, setReturnNotes] = useState('');
 
+  // Official Holiday Modal state
+  const [isOfficialHolidayModalOpen, setIsOfficialHolidayModalOpen] = useState(false);
+  const [holidayForm, setHolidayForm] = useState({
+    name: '',
+    startDate: format(new Date(), 'yyyy-MM-dd'),
+    endDate: format(new Date(), 'yyyy-MM-dd'),
+    notes: ''
+  });
+  const [isSubmittingHoliday, setIsSubmittingHoliday] = useState(false);
+  const [holidaySuccessMsg, setHolidaySuccessMsg] = useState<string | null>(null);
+
+  // Eligible employees count for attendance
+  const eligibleEmployeesCount = useMemo(() => {
+    return employees.filter(emp => {
+      const sub = String(emp.subjectToAttendance || '').trim().toLowerCase();
+      return sub !== 'no' && sub !== 'لا' && (emp as any).isSubjectToAttendance !== false;
+    }).length;
+  }, [employees]);
+
   // Rejection Reason Popup Modal state
   const [rejectionModalRequest, setRejectionModalRequest] = useState<{ id: string } | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [mainTab, setMainTab] = useState<'leaves' | 'wfh'>('leaves');
+
+  const handleSaveOfficialHoliday = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!holidayForm.name.trim() || !holidayForm.startDate || !holidayForm.endDate) {
+      alert(t('يرجى ملء جميع الحقول الإلزامية: اسم الإجازة، تاريخ البداية، وتاريخ النهاية'));
+      return;
+    }
+    if (holidayForm.endDate < holidayForm.startDate) {
+      alert(t('تاريخ النهاية يجب أن يكون مساوياً أو بعد تاريخ البداية'));
+      return;
+    }
+
+    setIsSubmittingHoliday(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('/api/leave-requests/official-holiday', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: holidayForm.name.trim(),
+          startDate: holidayForm.startDate,
+          endDate: holidayForm.endDate,
+          notes: holidayForm.notes.trim()
+        })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || t('فشل تسجيل الإجازة الرسمية'));
+      }
+
+      await refreshData();
+      setIsOfficialHolidayModalOpen(false);
+      setHolidaySuccessMsg(resData.message || t('تم تطبيق الإجازة الرسمية بنجاح على جميع الموظفين الخاضعين للحضور.'));
+      setTimeout(() => setHolidaySuccessMsg(null), 6000);
+      setHolidayForm({
+        name: '',
+        startDate: format(new Date(), 'yyyy-MM-dd'),
+        endDate: format(new Date(), 'yyyy-MM-dd'),
+        notes: ''
+      });
+    } catch (err: any) {
+      alert('حدث خطأ: ' + err.message);
+    } finally {
+      setIsSubmittingHoliday(false);
+    }
+  };
 
   const handleRequestReturn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -258,6 +332,22 @@ export const Leaves: React.FC = () => {
 
       {/* Filters & Actions */}
       <div className="bg-card p-6 border border-border space-y-4">
+        {holidaySuccessMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-black flex items-center justify-between gap-3"
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <span>{holidaySuccessMsg}</span>
+            </div>
+            <button onClick={() => setHolidaySuccessMsg(null)} className="text-muted-foreground hover:text-foreground">
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+
         <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
           <div className="relative flex-1 w-full group">
             <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground w-5 h-5 transition-colors group-focus-within:text-primary" />
@@ -270,12 +360,31 @@ export const Leaves: React.FC = () => {
             />
           </div>
           
-          <button
-            onClick={handleRenewAllLeaves}
-            className="w-full lg:w-auto px-6 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white font-black text-xs uppercase tracking-wider rounded-none shadow-md inline-flex items-center justify-center gap-2 cursor-pointer transition-all border-none"
-            title={t('تصفير وأرشفة الإجازات لبدء دورة رصيد جديدة')}
-          >
-            <Calendar className="w-4 h-4" />{t('تجديد أرصدة الإجازات السنوية لجميع الموظفين')}</button>
+          <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+            <button
+              onClick={() => {
+                setHolidayForm({
+                  name: '',
+                  startDate: format(new Date(), 'yyyy-MM-dd'),
+                  endDate: format(new Date(), 'yyyy-MM-dd'),
+                  notes: ''
+                });
+                setIsOfficialHolidayModalOpen(true);
+              }}
+              className="flex-1 lg:flex-none px-6 py-3 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-black text-xs uppercase tracking-wider rounded-none shadow-md inline-flex items-center justify-center gap-2 cursor-pointer transition-all border-none"
+              title={t('إضافة إجازة رسمية معتمدة لجميع الموظفين')}
+            >
+              <Sparkles className="w-4 h-4" />
+              {t('إضافة إجازة رسمية')}
+            </button>
+
+            <button
+              onClick={handleRenewAllLeaves}
+              className="flex-1 lg:flex-none px-6 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white font-black text-xs uppercase tracking-wider rounded-none shadow-md inline-flex items-center justify-center gap-2 cursor-pointer transition-all border-none"
+              title={t('تصفير وأرشفة الإجازات لبدء دورة رصيد جديدة')}
+            >
+              <Calendar className="w-4 h-4" />{t('تجديد أرصدة الإجازات السنوية لجميع الموظفين')}</button>
+          </div>
         </div>
 
         <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between pt-2 border-t border-border/40">
@@ -368,9 +477,20 @@ export const Leaves: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-8 py-6">
-                      <span className="font-bold text-foreground">
-                        {r.type === 'Sick' ? t('مرضية') : r.type === 'Annual' ? t('سنوية') : r.type === 'WorkFromHome' ? t('العمل من المنزل') : t('بدون راتب')}
-                      </span>
+                      {r.type === 'Sick' ? (
+                        <span className="font-bold text-rose-600 dark:text-rose-400">{t('مرضية')}</span>
+                      ) : r.type === 'Annual' || r.type === 'Vacation' ? (
+                        <span className="font-bold text-sky-600 dark:text-sky-400">{t('سنوية')}</span>
+                      ) : r.type === 'WorkFromHome' ? (
+                        <span className="font-bold text-indigo-600 dark:text-indigo-400">{t('العمل من المنزل')}</span>
+                      ) : r.type === 'OfficialHoliday' || r.type === 'Official' || r.type === 'إجازة رسمية' ? (
+                        <span className="px-2.5 py-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 font-black text-xs inline-flex items-center gap-1.5 rounded-none">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                          {t('إجازة رسمية')}
+                        </span>
+                      ) : (
+                        <span className="font-bold text-muted-foreground">{t('بدون راتب')}</span>
+                      )}
                     </td>
                     <td className="px-8 py-6 text-sm">
                       <div className="flex items-center gap-2 font-bold text-muted-foreground">
@@ -631,7 +751,15 @@ export const Leaves: React.FC = () => {
                   <div className="space-y-1">
                     <span className="text-muted-foreground block text-[10px] uppercase font-extrabold">{t('نوع الإجازة')}</span>
                     <span className="text-foreground text-sm font-black">
-                      {viewingLeave.type === 'Sick' ? t('إجازة مرضية') : viewingLeave.type === 'Annual' ? t('إجازة سنوية') : viewingLeave.type === 'WorkFromHome' ? t('العمل من المنزل') : t('إجازة بدون راتب')}
+                      {viewingLeave.type === 'Sick' ? t('إجازة مرضية') : 
+                       viewingLeave.type === 'Annual' || viewingLeave.type === 'Vacation' ? t('إجازة سنوية') : 
+                       viewingLeave.type === 'WorkFromHome' ? t('العمل من المنزل') : 
+                       viewingLeave.type === 'OfficialHoliday' || viewingLeave.type === 'Official' || viewingLeave.type === 'إجازة رسمية' ? (
+                        <span className="inline-flex items-center gap-1 text-amber-600 font-black">
+                          <Sparkles className="w-4 h-4" />
+                          {t('إجازة رسمية (مدفوعة الأجر)')}
+                        </span>
+                       ) : t('إجازة بدون راتب')}
                     </span>
                   </div>
                   
@@ -722,6 +850,165 @@ export const Leaves: React.FC = () => {
                   >{t('إغلاق التفاصيل')}</button>
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Official Holiday Modal Popup */}
+      <AnimatePresence>
+        {isOfficialHolidayModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => !isSubmittingHoliday && setIsOfficialHolidayModalOpen(false)} 
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 10 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 10 }} 
+              className="relative bg-card w-full max-w-lg rounded-none shadow-2xl overflow-hidden border border-border z-10 text-right"
+              dir="rtl"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-amber-600 to-yellow-600 text-white px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-white/10 rounded-none">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black uppercase tracking-tight">{t('إضافة إجازة رسمية')}</h3>
+                    <p className="text-[11px] font-bold text-amber-100 opacity-90">{t('تطبيق الإجازة تلقائياً لكافة الموظفين الخاضعين للحضور')}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => !isSubmittingHoliday && setIsOfficialHolidayModalOpen(false)}
+                  className="text-white/80 hover:text-white border-none outline-none bg-transparent cursor-pointer p-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Form */}
+              <form onSubmit={handleSaveOfficialHoliday} className="p-6 space-y-5">
+                {/* Information Card */}
+                <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-none space-y-2">
+                  <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-black text-xs">
+                    <Info className="w-4 h-4 shrink-0" />
+                    <span>{t('معلومات وضوابط الإجازة الرسمية:')}</span>
+                  </div>
+                  <ul className="text-[11px] text-muted-foreground font-bold space-y-1 mr-4 list-disc">
+                    <li>{t('تُطبق تلقائياً على جميع الموظفين الخاضعين لنظام الحضور (العمل من المقر وعن بُعد)')} <strong className="text-foreground">({eligibleEmployeesCount} {t('موظف')})</strong>.</li>
+                    <li>{t('الإجازة مدفوعة الأجر بالكامل ولا تُحسب غياباً أو استقطاعاً مالياً.')}</li>
+                    <li>{t('لا تُخصم من رصيد الإجازات السنوية أو المرضية للموظف.')}</li>
+                  </ul>
+                </div>
+
+                {/* Holiday Name */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black text-foreground block">
+                    {t('اسم الإجازة الرسمية')} <span className="text-rose-500">*</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    required 
+                    placeholder={t('مثال: إجازة عيد الفطر المبارك / اليوم الوطني / المولد النبوي...')}
+                    className="w-full px-4 py-2.5 bg-muted/40 border border-border rounded-none outline-none focus:ring-2 focus:ring-amber-500 font-bold text-foreground text-sm"
+                    value={holidayForm.name} 
+                    onChange={(e) => setHolidayForm(prev => ({ ...prev, name: e.target.value }))} 
+                  />
+                </div>
+
+                {/* Dates Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black text-foreground block">
+                      {t('من تاريخ')} <span className="text-rose-500">*</span>
+                    </label>
+                    <input 
+                      type="date" 
+                      required 
+                      className="w-full px-4 py-2.5 bg-muted/40 border border-border rounded-none outline-none focus:ring-2 focus:ring-amber-500 font-bold text-foreground text-sm"
+                      value={holidayForm.startDate} 
+                      onChange={(e) => setHolidayForm(prev => {
+                        const newStart = e.target.value;
+                        const newEnd = prev.endDate < newStart ? newStart : prev.endDate;
+                        return { ...prev, startDate: newStart, endDate: newEnd };
+                      })} 
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black text-foreground block">
+                      {t('إلى تاريخ')} <span className="text-rose-500">*</span>
+                    </label>
+                    <input 
+                      type="date" 
+                      required 
+                      min={holidayForm.startDate}
+                      className="w-full px-4 py-2.5 bg-muted/40 border border-border rounded-none outline-none focus:ring-2 focus:ring-amber-500 font-bold text-foreground text-sm"
+                      value={holidayForm.endDate} 
+                      onChange={(e) => setHolidayForm(prev => ({ ...prev, endDate: e.target.value }))} 
+                    />
+                  </div>
+                </div>
+
+                {/* Days Count badge */}
+                {holidayForm.startDate && holidayForm.endDate && (
+                  <div className="flex items-center justify-between p-3 bg-muted/50 border border-border text-xs font-bold">
+                    <span className="text-muted-foreground">{t('إجمالي مدة الإجازة الرسمية:')}</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-black">
+                      {Math.max(1, Math.round((new Date(holidayForm.endDate).getTime() - new Date(holidayForm.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1)} {t('يوم')}
+                    </span>
+                  </div>
+                )}
+
+                {/* Notes */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black text-foreground block">
+                    {t('ملاحظات وتفاصيل إضافية (اختياري)')}
+                  </label>
+                  <textarea 
+                    rows={3}
+                    placeholder={t('ملاحظات إدارية أو توجيهات متعلقة بهذه الإجازة...')}
+                    className="w-full px-4 py-2.5 bg-muted/40 border border-border rounded-none outline-none focus:ring-2 focus:ring-amber-500 font-bold text-foreground text-sm resize-none"
+                    value={holidayForm.notes} 
+                    onChange={(e) => setHolidayForm(prev => ({ ...prev, notes: e.target.value }))} 
+                  />
+                </div>
+
+                {/* Buttons */}
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+                  <button 
+                    type="button"
+                    disabled={isSubmittingHoliday}
+                    onClick={() => setIsOfficialHolidayModalOpen(false)}
+                    className="px-5 py-2.5 bg-muted hover:bg-muted/80 text-foreground font-black text-xs rounded-none border border-border cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    {t('إلغاء')}
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={isSubmittingHoliday}
+                    className="px-6 py-2.5 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-black text-xs rounded-none shadow-md inline-flex items-center gap-2 cursor-pointer transition-all border-none disabled:opacity-50"
+                  >
+                    {isSubmittingHoliday ? (
+                      <>
+                        <Clock className="w-4 h-4 animate-spin" />
+                        {t('جاري الحفظ والتطبيق...')}
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        {t('حفظ وتطبيق الإجازة الرسمية')}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}

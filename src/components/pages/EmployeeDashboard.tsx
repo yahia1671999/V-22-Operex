@@ -43,7 +43,8 @@ import {
   ChevronUp,
   Info,
   Building2,
-  CheckCheck
+  CheckCheck,
+  HeartPulse
 } from "lucide-react";
 import { useAuth } from "../../AuthContext";
 import { useData } from "../../contexts/DataContext";
@@ -2488,6 +2489,68 @@ export const EmployeeDashboard: React.FC = () => {
     t,
   ]);
 
+  // Personal annual sick leave balance calculator
+  const dashboardEmployeeSickInfo = useMemo(() => {
+    const employee =
+      dashboardData?.employee ||
+      employees.find((e) => e.id === currentEmployeeId);
+    if (!employee) return null;
+
+    const entitled = Number(employee.sickLeavePlan || 30);
+    const currentYear = new Date().getFullYear();
+    const effectiveLeaveRequests =
+      leaveRequests && leaveRequests.length > 0
+        ? leaveRequests
+        : dashboardData?.leaveRequests || [];
+
+    const approvedList = effectiveLeaveRequests.filter(
+      (lr) =>
+        lr.employeeId === employee.id &&
+        lr.status === "Approved" &&
+        (lr.type === "Sick" ||
+          lr.type === "مرضية" ||
+          lr.type === "إجازة مرضية" ||
+          lr.type === t("إجازة مرضية") ||
+          lr.type === t("مرضية")) &&
+        lr.startDate &&
+        lr.startDate.startsWith(String(currentYear)),
+    );
+
+    const consumed = approvedList.reduce((sum, lr) => {
+      const s = new Date(lr.startDate);
+      const e = new Date(lr.endDate);
+      const diffTime = e.getTime() - s.getTime();
+      const days =
+        diffTime < 0 ? 0 : Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      return sum + days;
+    }, 0);
+
+    const requested = (() => {
+      if (!requestItem.startDate || !requestItem.endDate) return 0;
+      const s = new Date(requestItem.startDate);
+      const e = new Date(requestItem.endDate);
+      const diffTime = e.getTime() - s.getTime();
+      return diffTime < 0 ? 0 : Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    })();
+
+    const remaining = entitled - (consumed + requested);
+
+    return {
+      entitled,
+      requested,
+      consumed,
+      remaining,
+    };
+  }, [
+    dashboardData,
+    employees,
+    leaveRequests,
+    requestItem.startDate,
+    requestItem.endDate,
+    currentEmployeeId,
+    t,
+  ]);
+
   const handleCreateRequest = async (
     entity: "leave-requests" | "mission-requests",
   ) => {
@@ -2513,6 +2576,17 @@ export const EmployeeDashboard: React.FC = () => {
           setMessage({
             type: "error",
             text: `رصيدك من الإجازات الاعتيادية لا يكفي! المتبقي المتاح لديك هو ${dashboardEmployeeInfo.entitled - dashboardEmployeeInfo.consumed} يوم فقط بينما تطلب ${dashboardEmployeeInfo.requested} يوم.`,
+          });
+          return;
+        }
+      }
+
+      // Check balance for Sick Leave before sending
+      if (entity === "leave-requests" && requestItem.type === "Sick") {
+        if (dashboardEmployeeSickInfo && dashboardEmployeeSickInfo.remaining < 0) {
+          setMessage({
+            type: "error",
+            text: `رصيدك من الإجازات المرضية لا يكفي! المتبقي المتاح لديك هو ${dashboardEmployeeSickInfo.entitled - dashboardEmployeeSickInfo.consumed} يوم فقط بينما تطلب ${dashboardEmployeeSickInfo.requested} يوم.`,
           });
           return;
         }
@@ -5529,6 +5603,60 @@ export const EmployeeDashboard: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {requestItem.type === "Sick" && dashboardEmployeeSickInfo && (
+                <div className="p-4 bg-card border-2 border-blue-500/30 rounded-none text-right text-xs text-foreground space-y-2 font-semibold">
+                  <div className="flex items-center justify-between pb-1 border-b border-border/60">
+                    <p className="font-black text-xs text-blue-600 flex items-center gap-1.5">
+                      <HeartPulse className="w-3.5 h-3.5 text-blue-600" />
+                      {t("🩺 رصيد الإجازة المرضية السنوي الخاص بك:")}
+                    </p>
+                    <span className="text-[10px] text-muted-foreground">{t("تجديد سنوي")}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[10px] sm:text-[11px] bg-muted/35 p-1.5 border border-border/40">
+                    <span className="text-muted-foreground">
+                      {t("1. الرصيد الإجمالي المستحق:")}
+                    </span>
+                    <span className="font-extrabold text-foreground">
+                      {dashboardEmployeeSickInfo.entitled} يوم
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[10px] sm:text-[11px] bg-blue-500/5 p-1.5 border border-blue-500/10">
+                    <span className="text-blue-700 dark:text-blue-300 font-extrabold">
+                      {t("2. الأيام المطلوبة حالياً:")}
+                    </span>
+                    <span className="font-extrabold text-blue-600">
+                      {dashboardEmployeeSickInfo.requested} يوم
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[10px] sm:text-[11px] bg-red-500/5 p-1.5 border border-red-500/10">
+                    <span className="text-red-700 dark:text-red-300 font-bold">
+                      {t("3. المستهلك المعتمد سابقاً:")}
+                    </span>
+                    <span className="font-extrabold text-red-600">
+                      {dashboardEmployeeSickInfo.consumed} يوم
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center bg-emerald-500/10 text-emerald-950 dark:text-emerald-100 p-2 border border-emerald-500/25">
+                    <span className="font-black">
+                      {t("4. الصافي المتبقي المتاح:")}
+                    </span>
+                    <span
+                      className={cn(
+                        "font-black text-xs px-1.5 py-0.5 rounded",
+                        dashboardEmployeeSickInfo.remaining >= 0
+                          ? "text-emerald-600 font-extrabold"
+                          : "text-destructive font-extrabold bg-destructive/10 animate-pulse",
+                      )}
+                    >
+                      {dashboardEmployeeSickInfo.remaining} يوم
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground pt-1">
+                    {t("ℹ️ الإجازة المرضية المعتمدة تخصم من الرصيد المرضي فقط ولا تخصم من الاعتيادي.")}
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mr-2">
@@ -8210,7 +8338,7 @@ export const EmployeeDashboard: React.FC = () => {
                     </div>
 
                     {selectedTeamRequestType === "leave" &&
-                      selectedTeamRequest.type === "Annual" &&
+                      (selectedTeamRequest.type === "Annual" || selectedTeamRequest.type === "Vacation") &&
                       (() => {
                         const calculatedEntitled = Number(emp?.leavePlan || 21);
                         const currentYear = new Date().getFullYear();
@@ -8256,31 +8384,111 @@ export const EmployeeDashboard: React.FC = () => {
 
                         return (
                           <div className="p-3 bg-card border border-border/80 text-xs text-right space-y-1">
-                            <p className="font-extrabold text-violet-600 mb-1">
-                              {t("📦 رصيد إجازات الموظف لهذا العام:")}
+                            <p className="font-extrabold text-emerald-600 mb-1">
+                              {t("📦 رصيد الإجازات الاعتيادية للموظف لهذا العام:")}
                             </p>
                             <div className="flex justify-between">
                               <span>{t("الرصيد السنوي الكلي:")}</span>
                               <span className="font-black">
-                                {calculatedEntitled} أيام
+                                {calculatedEntitled} {t("أيام")}
                               </span>
                             </div>
                             <div className="flex justify-between text-red-600">
                               <span>{t("المستهلك من قبل المعتمد:")}</span>
                               <span className="font-black">
-                                {approvedConsumed} أيام
+                                {approvedConsumed} {t("أيام")}
                               </span>
                             </div>
                             <div className="flex justify-between text-blue-600 border-t pt-1">
                               <span>{t("أيام هذا الطلب المقدم:")}</span>
                               <span className="font-black">
-                                {thisReqDays} أيام
+                                {thisReqDays} {t("أيام")}
                               </span>
                             </div>
                             <div className="flex justify-between text-emerald-600 font-extrabold">
                               <span>{t("الرصيد المتبقي المتاح:")}</span>
                               <span className="font-black">
-                                {teamRem - thisReqDays} أيام
+                                {teamRem - thisReqDays} {t("أيام")}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                    {selectedTeamRequestType === "leave" &&
+                      selectedTeamRequest.type === "Sick" &&
+                      (() => {
+                        const calculatedSickEntitled = Number(emp?.sickLeavePlan || 30);
+                        const currentYear = new Date().getFullYear();
+                        const approvedSickList = (leaveRequests || []).filter(
+                          (lr) =>
+                            lr.employeeId === emp?.id &&
+                            lr.status === "Approved" &&
+                            (lr.type === "Sick" ||
+                              lr.type === "مرضية" ||
+                              lr.type === "إجازة مرضية" ||
+                              lr.type === t("إجازة مرضية") ||
+                              lr.type === t("مرضية")) &&
+                            lr.startDate &&
+                            lr.startDate.startsWith(String(currentYear)),
+                        );
+                        const approvedSickConsumed = approvedSickList.reduce(
+                          (sum, lr) => {
+                            const s = new Date(lr.startDate);
+                            const e = new Date(lr.endDate);
+                            const diffTime = e.getTime() - s.getTime();
+                            const days =
+                              diffTime < 0
+                                ? 0
+                                : Math.ceil(diffTime / (1000 * 60 * 60 * 24)) +
+                                  1;
+                            return sum + days;
+                          },
+                          0,
+                        );
+                        const thisSickReqDays = (() => {
+                          if (
+                            !selectedTeamRequest.startDate ||
+                            !selectedTeamRequest.endDate
+                          )
+                            return 0;
+                          const s = new Date(selectedTeamRequest.startDate);
+                          const e = new Date(selectedTeamRequest.endDate);
+                          const diffTime = e.getTime() - s.getTime();
+                          return diffTime < 0
+                            ? 0
+                            : Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+                        })();
+                        const teamSickRem = calculatedSickEntitled - approvedSickConsumed;
+
+                        return (
+                          <div className="p-3 bg-card border border-blue-500/30 text-xs text-right space-y-1">
+                            <p className="font-extrabold text-blue-600 mb-1 flex items-center gap-1">
+                              <HeartPulse className="w-3.5 h-3.5 text-blue-600" />
+                              {t("🩺 رصيد الإجازة المرضية السنوية للموظف:")}
+                            </p>
+                            <div className="flex justify-between">
+                              <span>{t("الرصيد المرضي السنوي الكلي:")}</span>
+                              <span className="font-black">
+                                {calculatedSickEntitled} {t("أيام")}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-red-600">
+                              <span>{t("المستهلك المعتمد سابقاً:")}</span>
+                              <span className="font-black">
+                                {approvedSickConsumed} {t("أيام")}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-blue-600 border-t pt-1">
+                              <span>{t("أيام هذا الطلب المقدم:")}</span>
+                              <span className="font-black">
+                                {thisSickReqDays} {t("أيام")}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-emerald-600 font-extrabold">
+                              <span>{t("الرصيد المرضي المتبقي:")}</span>
+                              <span className="font-black">
+                                {teamSickRem - thisSickReqDays} {t("أيام")}
                               </span>
                             </div>
                           </div>

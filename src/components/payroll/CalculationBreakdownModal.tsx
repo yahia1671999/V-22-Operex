@@ -21,7 +21,8 @@ import {
   Building2,
   Plane,
   AlertTriangle,
-  Receipt
+  Receipt,
+  Fingerprint
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Employee, Transaction, SystemSettings } from '../../types';
@@ -51,6 +52,7 @@ interface CalculationBreakdownModalProps {
   transaction: Partial<Transaction> | null;
   month: string;
   systemSettings?: SystemSettings;
+  onViewAttendanceDetails?: () => void;
   extraContext?: {
     penaltiesList?: any[];
     missionsList?: any[];
@@ -69,6 +71,7 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
   transaction,
   month,
   systemSettings,
+  onViewAttendanceDetails,
   extraContext
 }) => {
   const { t, language } = useLanguage();
@@ -522,11 +525,11 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
           initial={{ opacity: 0, scale: 0.95, y: 15 }} 
           animate={{ opacity: 1, scale: 1, y: 0 }} 
           exit={{ opacity: 0, scale: 0.95, y: 15 }} 
-          className="relative bg-white dark:bg-slate-900 w-full max-w-5xl rounded-[2.5rem] shadow-2xl overflow-hidden border border-border flex flex-col max-h-[90vh] print:max-h-none print:shadow-none print:rounded-none print:border-none"
+          className="relative bg-card text-foreground w-full max-w-5xl rounded-[2.5rem] shadow-2xl overflow-hidden border border-border flex flex-col max-h-[90vh] print:max-h-none print:shadow-none print:rounded-none print:border-none"
           dir={isRtl ? 'rtl' : 'ltr'}
         >
           {/* Header */}
-          <div className="p-6 md:p-8 border-b border-border bg-slate-50/50 dark:bg-slate-800/30 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
+          <div className="p-6 md:p-8 border-b border-border bg-muted/40 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
             <div className="flex items-center gap-4">
               <div className="w-14 h-14 rounded-2xl bg-indigo-600/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center border border-indigo-200 dark:border-indigo-800/40 shadow-sm">
                 <Calculator className="w-7 h-7" />
@@ -545,7 +548,17 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-2 self-end md:self-auto">
+            <div className="flex flex-wrap items-center gap-2 self-end md:self-auto">
+              {onViewAttendanceDetails && (
+                <button 
+                  onClick={onViewAttendanceDetails}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-teal-50 dark:bg-teal-950/30 hover:bg-teal-100 text-teal-700 dark:text-teal-300 font-black text-xs rounded-xl border border-teal-200 dark:border-teal-800/40 transition-all shadow-sm"
+                  title={t('عرض تفاصيل وسجل الحضور والانصراف للشهر')}
+                >
+                  <Fingerprint className="w-4 h-4" />
+                  <span>{t('تفاصيل الحضور الشهري')}</span>
+                </button>
+              )}
               <button 
                 onClick={() => window.print()}
                 className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-muted text-foreground font-bold text-xs rounded-xl border border-border transition-all shadow-sm"
@@ -870,7 +883,7 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
           </div>
 
           {/* Footer */}
-          <div className="p-5 border-t border-border bg-slate-50/50 dark:bg-slate-800/30 flex justify-between items-center no-print">
+          <div className="p-5 border-t border-border bg-muted/40 flex justify-between items-center no-print">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
               <span>{isRtl ? 'تمت مطابقة وحساب جميع الأرقام والبنود وفق اللوائح الإدارية والمالية المعتمدة' : 'All line items reconciled against approved HR and financial regulations'}</span>

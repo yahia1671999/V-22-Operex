@@ -1316,8 +1316,8 @@ export const AdminNotices: React.FC = () => {
               className="bg-card border-2 border-border rounded-3xl w-full max-w-3xl max-h-[92vh] overflow-y-auto shadow-2xl flex flex-col my-auto"
             >
               {/* Document Header Letterhead */}
-              <div className="bg-slate-900 text-white p-8 rounded-t-3xl border-b-4 border-red-600 space-y-4">
-                <div className="flex items-center justify-between border-b border-white/20 pb-4">
+              <div className="bg-muted/80 text-foreground p-8 rounded-t-3xl border-b-4 border-red-600 space-y-4">
+                <div className="flex items-center justify-between border-b border-border pb-4">
                   <div className="flex items-center gap-3">
                     {systemSettings?.logoUrl ? (
                       <img
@@ -1327,14 +1327,14 @@ export const AdminNotices: React.FC = () => {
                       />
                     ) : (
                       <div className="w-12 h-12 flex items-center justify-center bg-transparent">
-                        <Building2 className="w-10 h-10 text-white" />
+                        <Building2 className="w-10 h-10 text-primary" />
                       </div>
                     )}
                     <div>
-                      <h2 className="font-black text-lg text-white">
+                      <h2 className="font-black text-lg text-foreground">
                         القرارات الإدارية العليا
                       </h2>
-                      <p className="text-xs text-white/70 font-medium">
+                      <p className="text-xs text-muted-foreground font-medium">
                         مستند رسمي صادر عن الإدارة التنفيذية
                       </p>
                     </div>
@@ -1343,31 +1343,31 @@ export const AdminNotices: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => window.print()}
-                      className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors cursor-pointer"
+                      className="p-2.5 bg-card hover:bg-muted text-foreground border border-border rounded-xl transition-colors cursor-pointer"
                       title="طباعة القرار"
                     >
                       <Printer className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => setViewingNotice(null)}
-                      className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors cursor-pointer"
+                      className="p-2.5 bg-card hover:bg-muted text-foreground border border-border rounded-xl transition-colors cursor-pointer"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-4 text-xs font-bold text-white/80">
+                <div className="flex flex-wrap items-center justify-between gap-4 text-xs font-bold text-muted-foreground">
                   <div className="flex items-center gap-2">
-                    <span className="text-white/50">الجهة الصادرة:</span>
-                    <span className="text-amber-400">
+                    <span>الجهة الصادرة:</span>
+                    <span className="text-amber-600 dark:text-amber-400">
                       {viewingNotice.createdByName} (
                       {viewingNotice.createdByRole})
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-white/50">التاريخ:</span>
-                    <span>{viewingNotice.noticeDate}</span>
+                    <span>التاريخ:</span>
+                    <span className="text-foreground">{viewingNotice.noticeDate}</span>
                   </div>
                 </div>
               </div>

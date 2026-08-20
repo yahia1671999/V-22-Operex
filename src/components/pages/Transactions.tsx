@@ -39,6 +39,7 @@ import {
   Receipt
 } from 'lucide-react';
 import { CalculationBreakdownModal } from '../payroll/CalculationBreakdownModal';
+import { MonthlyAttendanceDetailsModal } from '../attendance/MonthlyAttendanceDetailsModal';
 import { db, collection, setDoc, doc, deleteDoc, serverTimestamp, OperationType, handleApiError, writeBatch } from '../../api';
 import { useData } from '../../contexts/DataContext';
 import { Employee, Transaction } from '../../types';
@@ -57,7 +58,7 @@ import { formatDateTime12h } from '../../utils/timeFormatter';
 export const Transactions: React.FC = () => {
   const { t, language } = useLanguage();
   const isRtl = language === 'ar';
-  const { transactions, employees, attendanceRecords, attendanceShifts, missions, missionTypes, leaveRequests, refreshData, systemSettings, adminDepartments, penalties } = useData();
+  const { transactions, employees, attendanceRecords, attendanceShifts, missions, missionTypes, leaveRequests, absenceRecords, absenceTypes, administrativeNotices, refreshData, systemSettings, adminDepartments, penalties } = useData();
   const [activeTab, setActiveTab] = useState<'history' | 'processing'>('processing');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPayCard, setSelectedPayCard] = useState<Transaction | null>(null);
@@ -73,13 +74,23 @@ export const Transactions: React.FC = () => {
   const [selectedMissionEmp, setSelectedMissionEmp] = useState<Employee | null>(null);
   const [isMissionListModalOpen, setIsMissionListModalOpen] = useState(false);
   const [deductionTypes, setDeductionTypes] = useState<any[]>([]);
+  const [financialAdvancesList, setFinancialAdvancesList] = useState<any[]>([]);
   const [activeProfileDeductionDetails, setActiveProfileDeductionDetails] = useState<any[]>([]);
   const [showDeductionsBreakdown, setShowDeductionsBreakdown] = useState(false);
   const [breakdownTarget, setBreakdownTarget] = useState<{
     employee: Employee;
     transaction: Partial<Transaction>;
   } | null>(null);
+  const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
+  const [attendanceModalEmployee, setAttendanceModalEmployee] = useState<Employee | null>(null);
+  const [attendanceModalMonth, setAttendanceModalMonth] = useState<string>(selectedMonth);
   const [isSyncingApproved, setIsSyncingApproved] = useState(false);
+
+  const handleOpenAttendanceDetails = (emp: Employee, monthStr?: string) => {
+    setAttendanceModalEmployee(emp);
+    setAttendanceModalMonth(monthStr || selectedMonth);
+    setIsAttendanceModalOpen(true);
+  };
   const [syncSummaryModal, setSyncSummaryModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -91,22 +102,27 @@ export const Transactions: React.FC = () => {
   } | null>(null);
 
   useEffect(() => {
-    const fetchDeductionTypes = async () => {
+    const fetchExtraData = async () => {
       try {
         const token = localStorage.getItem('auth_token');
         if (!token) return;
-        const res = await fetch('/api/deduction-types', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const data = await res.json();
+        const [dRes, aRes] = await Promise.all([
+          fetch('/api/deduction-types', { headers: { 'Authorization': `Bearer ${token}` } }),
+          fetch('/api/financial-advances', { headers: { 'Authorization': `Bearer ${token}` } })
+        ]);
+        if (dRes.ok) {
+          const data = await dRes.json();
           setDeductionTypes(data || []);
         }
+        if (aRes.ok) {
+          const advData = await aRes.json();
+          setFinancialAdvancesList(advData || []);
+        }
       } catch (err) {
-        console.error("Failed to fetch deduction types:", err);
+        console.error("Failed to fetch deduction types or financial advances:", err);
       }
     };
-    fetchDeductionTypes();
+    fetchExtraData();
   }, []);
 
   // Helper to calculate active profile deductions for an employee
@@ -116,18 +132,45 @@ export const Transactions: React.FC = () => {
     let calculatedOtherDeductions = 0;
     const detailsList: any[] = [];
 
-    const activeDeductionsList = deductionTypes.filter(dt => dt.status === 'Active');
+    const activeDeductionsList = (deductionTypes || []).filter(dt => dt.status === 'Active');
 
     activeDeductionsList.forEach(dt => {
-      const isSocialInsurance = dt.category === t('تأمينات') || dt.category === 'تأمينات' || dt.category === 'Social Insurance' || dt.category === 'insurance' || dt.category === 'تأمينات اجتماعية' || dt.category?.includes('تأمين');
-      const isTax = dt.category === t('ضرائب') || dt.category === 'ضرائب' || dt.category === 'ضريبة كسب العمل' || dt.category === t('ضريبة كسب العمل') || dt.category === 'Tax' || dt.category === 'Taxes' || dt.category?.toLowerCase().includes('tax') || dt.category?.includes('ضريب');
+      const dtCat = String(dt.category || '').toLowerCase().trim();
+      const dtNameAr = String(dt.nameAr || '').toLowerCase().trim();
+      const dtName = String(dt.name || '').toLowerCase().trim();
+
+      // Check if it's Social Insurance
+      const isSocialInsurance = 
+        dtCat === 'تأمينات' || 
+        dtCat === 'تأمينات اجتماعية' || 
+        dtCat === 'social insurance' || 
+        dtCat === 'social_insurance' || 
+        dtCat === 'insurance' || 
+        dtCat === t('تأمينات');
+
+      // Check if it's strictly Labor Income Tax (ضريبة كسب العمل)
+      // Must NOT include general 'ضرائب' or 'ضرائب ورسوم أخرى' or substring matching on 'ضريب' / 'tax'
+      const isIncomeTax = 
+        !isSocialInsurance && (
+          dtCat === 'ضريبة كسب العمل' || 
+          dtCat === 'كسب العمل' || 
+          dtCat === 'ضريبة كسب عمل' || 
+          dtCat === 'كسب عمل' || 
+          dtCat === 'labor income tax' || 
+          dtCat === 'labor_income_tax' || 
+          dtCat === 'payroll tax' || 
+          dtCat === 'payroll_tax' || 
+          dtCat === 'income tax' || 
+          dtCat === 'income_tax' || 
+          dtCat === t('ضريبة كسب العمل')
+        );
 
       // Check SI (social insurance) eligibility
-      if (isSocialInsurance && emp.subjectToSi === 'No') {
+      if (isSocialInsurance && (emp.subjectToSi === 'No' || emp.subjectToSi === false)) {
         return;
       }
-      // Check tax eligibility
-      if (isTax && emp.subjectToTax === 'No') {
+      // Check tax eligibility strictly for Income Tax
+      if (isIncomeTax && (emp.subjectToTax === 'No' || emp.subjectToTax === false || emp.taxExempt === 'Yes' || emp.taxExempt === true)) {
         return;
       }
 
@@ -203,16 +246,24 @@ export const Transactions: React.FC = () => {
         detailsList.push({
           id: dt.id,
           nameAr: dt.nameAr || dt.name,
-          category: dt.category,
+          category: isIncomeTax 
+            ? 'ضريبة كسب العمل' 
+            : (isSocialInsurance 
+                ? 'تأمينات اجتماعية' 
+                : (dtCat === 'ضرائب' || dtCat === 'ضرائب ورسوم أخرى' || dtCat === 'other taxes' || dt.category === t('ضرائب')
+                    ? 'ضرائب ورسوم أخرى' 
+                    : (dt.category || 'خصومات أخرى'))),
           employeeVal: Number(employeeVal.toFixed(2))
         });
       }
 
       if (isSocialInsurance) {
         calculatedSocialInsurance += employeeVal;
-      } else if (isTax) {
+      } else if (isIncomeTax) {
+        // Strictly Labor Income Tax
         calculatedTax += employeeVal;
       } else {
+        // All other deductions including Other Taxes & Fees, Union, Fellowship Fund, Miscellaneous
         calculatedOtherDeductions += employeeVal;
       }
     });
@@ -288,12 +339,18 @@ export const Transactions: React.FC = () => {
 
       const approvedLeavesList = (leaveRequests || []).filter(l => 
         l.employeeId === emp.id && 
-        l.status === 'Approved'
+        ((l.status as string) === 'Approved' || (l.status as string) === 'معتمدة' || (l.status as string) === 'مقبولة')
       );
+
+      const isMissionApproved = (status?: string | null) => {
+        if (!status) return false;
+        const s = status.trim();
+        return ['Approved', 'Completed', 'Executed', 'معتمدة', 'مكتملة', 'مكتملة ومُقيّمة', 'منفذة'].includes(s);
+      };
 
       const approvedMissionsList = (missions || []).filter(m => 
         m.employeeId === emp.id && 
-        m.status === 'Approved'
+        isMissionApproved(m.status)
       );
 
       let actualWorkDaysCount = 0;
@@ -305,6 +362,7 @@ export const Transactions: React.FC = () => {
 
       let totalDelayMinutes = 0;
       let totalEarlyOutMinutes = 0;
+      let totalOvertimeMinutes = 0;
 
       // Precompute annual leave entitlement & consumed vacation days map for this employee
       const entitledVacationDays = Number(emp.leavePlan || 21);
@@ -345,12 +403,12 @@ export const Transactions: React.FC = () => {
         const dayOfWeek = date.getDay();
         const isWorkDay = shiftWorkDays.includes(dayOfWeek);
 
-        // 1. Check for mission FIRST (priority)
+        // 1. Check for mission FIRST (priority: not absent, not deducted)
         const mission = approvedMissionsList.find(m => m.startDate <= dateStr && m.endDate >= dateStr);
         if (mission) {
           missionDaysCount++;
           if (isWorkDay) actualWorkDaysCount++;
-          continue; // Covered by mission: not absent, not deducted
+          continue;
         }
 
         // 2. Check for leave or work from home
@@ -377,7 +435,6 @@ export const Transactions: React.FC = () => {
             // أيام العمل من المنزل والعمل عن بُعد المعتمدة: يوم عمل فعلي كامل ولا يُحتسب غياباً ولا يخصم من الراتب
             if (isWorkDay) actualWorkDaysCount++;
             
-            // احتساب ساعات العمل وساعات التأخير / الإضافي المسجلة طبقاً لقواعد الحضور الحالية
             const dayRecords = records.filter(r => r.timestamp && r.timestamp.startsWith(dateStr));
             const firstIn = dayRecords.find(r => r.type === 'In');
             const lastOut = dayRecords.find(r => r.type === 'Out');
@@ -401,6 +458,8 @@ export const Transactions: React.FC = () => {
                   const actualOut = new Date(lastOut.timestamp);
                   if (isBefore(actualOut, shiftEnd)) {
                     totalEarlyOutMinutes += Math.max(0, Math.floor((shiftEnd.getTime() - actualOut.getTime()) / (1000 * 60)));
+                  } else if (isAfter(actualOut, shiftEnd)) {
+                    totalOvertimeMinutes += Math.max(0, Math.floor((actualOut.getTime() - shiftEnd.getTime()) / (1000 * 60)));
                   }
                 } catch (err) {}
               }
@@ -423,7 +482,7 @@ export const Transactions: React.FC = () => {
             paidLeaveDaysCount++;
             if (isWorkDay) actualWorkDaysCount++;
           }
-          continue; // Covered by leave: proceed to next day
+          continue;
         }
 
         // 3. If not a shift work day (weekend / rest day), skip without absence
@@ -457,6 +516,8 @@ export const Transactions: React.FC = () => {
               const actualOut = new Date(lastOut.timestamp);
               if (isBefore(actualOut, shiftEnd)) {
                 totalEarlyOutMinutes += Math.max(0, Math.floor((shiftEnd.getTime() - actualOut.getTime()) / (1000 * 60)));
+              } else if (isAfter(actualOut, shiftEnd)) {
+                totalOvertimeMinutes += Math.max(0, Math.floor((actualOut.getTime() - shiftEnd.getTime()) / (1000 * 60)));
               }
             } catch (err) {}
           }
@@ -468,8 +529,10 @@ export const Transactions: React.FC = () => {
 
       const basic = emp.basicSalary || 0;
       const housing = emp.housingAllowance || 0;
-      const otherAlls = (emp.transportAllowance || 0) + (emp.subsistenceAllowance || 0) + (emp.otherAllowances || 0) + (emp.mobileAllowance || 0) + (emp.managementAllowance || 0);
-      const grossBase = basic + housing + otherAlls;
+      const transport = emp.transportAllowance || 0;
+      const subsistence = emp.subsistenceAllowance || 0;
+      const otherAllsSum = (emp.otherAllowances || 0) + (emp.mobileAllowance || 0) + (emp.managementAllowance || 0);
+      const grossBase = basic + housing + transport + subsistence + otherAllsSum;
       const deductibleSalary = grossBase - housing;
 
       const hourlyRate = deductibleSalary / 30 / (emp.dailyWorkHours || 8);
@@ -477,39 +540,51 @@ export const Transactions: React.FC = () => {
       const earlyOutDeduction = (totalEarlyOutMinutes / 60) * hourlyRate;
       const totalAttendancePenalty = Number((delayDeduction + earlyOutDeduction).toFixed(2));
 
+      const calculatedOvertimeHours = Number((totalOvertimeMinutes / 60).toFixed(1));
+      const overtimeRate = 1.5;
+      const calculatedOvertimeValue = Number(((basic / 30 / (emp.dailyWorkHours || 8)) * overtimeRate * calculatedOvertimeHours).toFixed(2));
+
       const profileDeductions = calculateProfileDeductionsForEmployee(emp, grossBase, basic);
       const calculatedActualWorkDays = Math.max(0, 30 - absenceDaysCount - unpaidLeaveDaysCount);
 
       const approvedPenaltiesVal = getApprovedPenaltiesSumForMonth(emp.id, month);
 
+      const empLoansVal = (financialAdvancesList || [])
+        .filter(a => 
+          (a.employeeId === emp.id || a.employee_id === emp.id) &&
+          (a.month === month || (a.disbursementDate && a.disbursementDate.startsWith(month))) &&
+          (a.status === 'Approved' || a.status === 'Paid' || a.status === 'معتمد' || a.status === 'مدفوع')
+        )
+        .reduce((sum, a) => sum + (Number(a.installmentAmount || a.amount) || 0), 0);
+
       const draftTx: any = {
         employeeId: emp.id,
         month: month,
         actualWorkDays: calculatedActualWorkDays,
-        basicSalary: Number(((emp.basicSalary || 0) / 30 * calculatedActualWorkDays).toFixed(2)),
-        housingAllowance: Number(((emp.housingAllowance || 0) / 30 * calculatedActualWorkDays).toFixed(2)),
-        transportAllowance: Number(((emp.transportAllowance || 0) / 30 * calculatedActualWorkDays).toFixed(2)),
-        subsistenceAllowance: Number(((emp.subsistenceAllowance || 0) / 30 * calculatedActualWorkDays).toFixed(2)),
-        otherAllowances: Number(((emp.otherAllowances || 0) / 30 * calculatedActualWorkDays).toFixed(2)),
-        mobileAllowance: Number(((emp.mobileAllowance || 0) / 30 * calculatedActualWorkDays).toFixed(2)),
-        managementAllowance: Number(((emp.managementAllowance || 0) / 30 * calculatedActualWorkDays).toFixed(2)),
+        basicSalary: Number(emp.basicSalary || 0),
+        housingAllowance: Number(emp.housingAllowance || 0),
+        transportAllowance: Number(emp.transportAllowance || 0),
+        subsistenceAllowance: Number(emp.subsistenceAllowance || 0),
+        otherAllowances: Number(emp.otherAllowances || 0),
+        mobileAllowance: Number(emp.mobileAllowance || 0),
+        managementAllowance: Number(emp.managementAllowance || 0),
         dailyWorkHours: emp.dailyWorkHours || 8,
         absenceDays: absenceDaysCount,
         absenceDeduction: Number((absenceDaysCount * (deductibleSalary / 30)).toFixed(2)),
         unpaidLeaveDays: unpaidLeaveDaysCount,
         unpaidLeaveDeduction: Number((unpaidLeaveDaysCount * (deductibleSalary / 30)).toFixed(2)),
         departureDelayDeduction: totalAttendancePenalty,
+        overtimeHours: calculatedOvertimeHours,
+        overtimeValue: calculatedOvertimeValue,
         socialInsurance: profileDeductions.socialInsurance,
         taxValue: profileDeductions.taxValue,
         otherDeductions: Number((profileDeductions.otherDeductions + approvedPenaltiesVal).toFixed(2)),
+        loans: Number(empLoansVal.toFixed(2)),
         otherIncome: 0,
-        overtimeHours: 0,
-        overtimeValue: 0,
-        loans: 0,
         salaryReceived: 0,
         bankReceived: 0,
         status: 'Draft',
-        notes: `[حساب تلقائي مسودة: حضور=${presenceDaysCount}، غياب=${absenceDaysCount}]`
+        notes: `[حساب تلقائي مسودة: حضور=${presenceDaysCount}، غياب=${absenceDaysCount}، مأموريات=${missionDaysCount}، إجازات مدفوعة=${paidLeaveDaysCount}]`
       };
 
       const totals = calculateTotals(draftTx);
@@ -518,7 +593,7 @@ export const Transactions: React.FC = () => {
         ...totals
       };
     };
-  }, [employees, attendanceRecords, attendanceShifts, leaveRequests, missions, deductionTypes, penalties]);
+  }, [employees, attendanceRecords, attendanceShifts, leaveRequests, missions, deductionTypes, penalties, financialAdvancesList]);
 
   const fetchAuditLogs = async () => {
     try {
@@ -588,9 +663,10 @@ export const Transactions: React.FC = () => {
     const month = formData.month;
     
     // Filter attendance records of this employee for this month
+    const empCandidateIds = [emp.id, emp.employeeId, emp.userId, emp.email].filter(Boolean).map(x => String(x).trim().toLowerCase());
     const records = attendanceRecords.filter(r => 
-      r.employeeId === emp.id && 
-      r.timestamp.startsWith(month)
+      empCandidateIds.includes(String(r.employeeId || '').trim().toLowerCase()) && 
+      r.timestamp && r.timestamp.startsWith(month)
     );
 
     const [yearStr, monthStr] = month.split('-');
@@ -617,13 +693,19 @@ export const Transactions: React.FC = () => {
     // Approved leaves list
     const approvedLeavesList = (leaveRequests || []).filter(l => 
       l.employeeId === emp.id && 
-      l.status === 'Approved'
+      ((l.status as string) === 'Approved' || (l.status as string) === 'معتمدة' || (l.status as string) === 'مقبولة')
     );
+
+    const isMissionApproved = (status?: string | null) => {
+      if (!status) return false;
+      const s = status.trim();
+      return ['Approved', 'Completed', 'Executed', 'معتمدة', 'مكتملة', 'مكتملة ومُقيّمة', 'منفذة'].includes(s);
+    };
 
     // Approved missions list
     const approvedMissionsList = (missions || []).filter(m => 
       m.employeeId === emp.id && 
-      m.status === 'Approved'
+      isMissionApproved(m.status)
     );
 
     let actualWorkDaysCount = 0; // Days of shift in month (excluding weekend/holiday)
@@ -635,6 +717,7 @@ export const Transactions: React.FC = () => {
 
     let totalDelayMinutes = 0;
     let totalEarlyOutMinutes = 0;
+    let totalOvertimeMinutes = 0;
 
     // Precompute annual leave entitlement & consumed vacation days map for this employee
     const entitledVacationDays = Number(emp.leavePlan || 21);
@@ -731,6 +814,8 @@ export const Transactions: React.FC = () => {
                 const actualOut = new Date(lastOut.timestamp);
                 if (isBefore(actualOut, shiftEnd)) {
                   totalEarlyOutMinutes += Math.max(0, Math.floor((shiftEnd.getTime() - actualOut.getTime()) / (1000 * 60)));
+                } else if (isAfter(actualOut, shiftEnd)) {
+                  totalOvertimeMinutes += Math.max(0, Math.floor((actualOut.getTime() - shiftEnd.getTime()) / (1000 * 60)));
                 }
               } catch (err) {}
             }
@@ -789,6 +874,8 @@ export const Transactions: React.FC = () => {
             const actualOut = new Date(lastOut.timestamp);
             if (isBefore(actualOut, shiftEnd)) {
               totalEarlyOutMinutes += Math.max(0, Math.floor((shiftEnd.getTime() - actualOut.getTime()) / (1000 * 60)));
+            } else if (isAfter(actualOut, shiftEnd)) {
+              totalOvertimeMinutes += Math.max(0, Math.floor((actualOut.getTime() - shiftEnd.getTime()) / (1000 * 60)));
             }
           } catch (err) {
             console.error("Error calculating early departure in automate:", err);
@@ -803,9 +890,10 @@ export const Transactions: React.FC = () => {
     // Now calculate deductions based on rules
     const basic = emp.basicSalary || 0;
     const housing = emp.housingAllowance || 0;
-    // Gross base - Housing allowance is deductible salary
-    const otherAlls = (emp.transportAllowance || 0) + (emp.subsistenceAllowance || 0) + (emp.otherAllowances || 0) + (emp.mobileAllowance || 0) + (emp.managementAllowance || 0);
-    const grossBase = basic + housing + otherAlls;
+    const transport = emp.transportAllowance || 0;
+    const subsistence = emp.subsistenceAllowance || 0;
+    const otherAllsSum = (emp.otherAllowances || 0) + (emp.mobileAllowance || 0) + (emp.managementAllowance || 0);
+    const grossBase = basic + housing + transport + subsistence + otherAllsSum;
     const deductibleSalary = grossBase - housing;
 
     // قيمه الساعه = الراتب الخاضع للخصم / 30 / عدد ساعات العمل اليومية
@@ -814,22 +902,54 @@ export const Transactions: React.FC = () => {
     const earlyOutDeduction = (totalEarlyOutMinutes / 60) * hourlyRate;
     const totalAttendancePenalty = Number((delayDeduction + earlyOutDeduction).toFixed(2));
 
+    const calculatedOvertimeHours = Number((totalOvertimeMinutes / 60).toFixed(1));
+    const overtimeRate = 1.5;
+    const calculatedOvertimeValue = Number(((basic / 30 / (emp.dailyWorkHours || 8)) * overtimeRate * calculatedOvertimeHours).toFixed(2));
+
     const profileDeductions = calculateProfileDeductionsForEmployee(emp, grossBase, basic);
 
     const calculatedActualWorkDays = Math.max(0, 30 - absenceDaysCount - unpaidLeaveDaysCount);
 
     const approvedPenaltiesVal = getApprovedPenaltiesSumForMonth(emp.id, month);
 
-    setFormData({
+    const empLoansVal = (financialAdvancesList || [])
+      .filter(a => 
+        (a.employeeId === emp.id || a.employee_id === emp.id) &&
+        (a.month === month || (a.disbursementDate && a.disbursementDate.startsWith(month))) &&
+        (a.status === 'Approved' || a.status === 'Paid' || a.status === 'معتمد' || a.status === 'مدفوع')
+      )
+      .reduce((sum, a) => sum + (Number(a.installmentAmount || a.amount) || 0), 0);
+
+    const newFormData = {
       ...formData,
+      basicSalary: Number(emp.basicSalary || 0),
+      housingAllowance: Number(emp.housingAllowance || 0),
+      transportAllowance: Number(emp.transportAllowance || 0),
+      subsistenceAllowance: Number(emp.subsistenceAllowance || 0),
+      otherAllowances: Number(emp.otherAllowances || 0),
+      mobileAllowance: Number(emp.mobileAllowance || 0),
+      managementAllowance: Number(emp.managementAllowance || 0),
+      dailyWorkHours: emp.dailyWorkHours || 8,
       actualWorkDays: calculatedActualWorkDays,
       absenceDays: absenceDaysCount,
+      absenceDeduction: Number((absenceDaysCount * (deductibleSalary / 30)).toFixed(2)),
       unpaidLeaveDays: unpaidLeaveDaysCount,
+      unpaidLeaveDeduction: Number((unpaidLeaveDaysCount * (deductibleSalary / 30)).toFixed(2)),
       departureDelayDeduction: totalAttendancePenalty,
+      overtimeHours: calculatedOvertimeHours,
+      overtimeValue: calculatedOvertimeValue,
       socialInsurance: profileDeductions.socialInsurance,
       taxValue: profileDeductions.taxValue,
       otherDeductions: Number((profileDeductions.otherDeductions + approvedPenaltiesVal).toFixed(2)),
-      notes: `${formData.notes || ''}\n[حساب تلقائي: حضور=${presenceDaysCount}، مأمورية=${missionDaysCount}، إجازة مدفوعة=${paidLeaveDaysCount}، إجازة غير مدفوعة=${unpaidLeaveDaysCount}، غياب=${absenceDaysCount}، تأخير=${totalDelayMinutes}دقيقة، خروج مبكر=${totalEarlyOutMinutes}دقيقة]`.trim()
+      loans: Number(empLoansVal.toFixed(2)),
+      notes: `${formData.notes || ''}\n[حساب تلقائي: حضور=${presenceDaysCount}، مأمورية=${missionDaysCount}، إجازة مدفوعة=${paidLeaveDaysCount}، إجازة غير مدفوعة=${unpaidLeaveDaysCount}، غياب=${absenceDaysCount}، إضافي=${calculatedOvertimeHours}ساعة، تأخير=${totalDelayMinutes}دقيقة، خروج مبكر=${totalEarlyOutMinutes}دقيقة]`.trim()
+    };
+
+    const totals = calculateTotals(newFormData as any);
+
+    setFormData({
+      ...newFormData,
+      ...totals
     });
     
     setIsCalculating(false);
@@ -1821,6 +1941,15 @@ export const Transactions: React.FC = () => {
                         {/* Actions */}
                         <td className="p-5 text-sm">
                           <div className="flex items-center gap-2">
+                            {/* Monthly Attendance Details Button */}
+                            <button 
+                              onClick={() => handleOpenAttendanceDetails(emp, selectedMonth)}
+                              className="p-2.5 bg-teal-50 hover:bg-teal-100 dark:bg-teal-950/30 text-teal-600 dark:text-teal-400 rounded-xl border border-teal-100 dark:border-teal-900/30 transition-all hover:scale-[1.05] duration-150"
+                              title={t('تفاصيل الحضور الشهري (سجل الأيام، التأخير، الإضافي، المأموريات والإجازات)')}
+                            >
+                              <Fingerprint className="w-4 h-4" />
+                            </button>
+
                             {/* Pay Card (كارت الراتب) is always available! */}
                             <button 
                               onClick={() => setSelectedPayCard(transaction)}
@@ -1992,6 +2121,15 @@ export const Transactions: React.FC = () => {
                       <td className="px-8 py-5">
                         <div className="flex items-center gap-2">
                           <button 
+                            onClick={() => {
+                              if (emp) handleOpenAttendanceDetails(emp, tx.month);
+                            }}
+                            className="p-2.5 text-teal-600 dark:text-teal-400 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-all shadow-sm"
+                            title={t('تفاصيل الحضور الشهري')}
+                          >
+                            <Fingerprint className="w-4 h-4" />
+                          </button>
+                          <button 
                             onClick={() => setSelectedPayCard(tx)}
                             className="p-2.5 text-blue-600 dark:text-blue-400 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-all shadow-sm"
                             title={t('عرض الكارت')}
@@ -2053,7 +2191,22 @@ export const Transactions: React.FC = () => {
                     <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">{selectedMonth}</p>
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button 
+                    onClick={() => {
+                      if (selectedPayCard) {
+                        const emp = employees.find(e => e.id === selectedPayCard.employeeId);
+                        if (emp) {
+                          handleOpenAttendanceDetails(emp, selectedPayCard.month);
+                        }
+                      }
+                    }}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-teal-50 dark:bg-teal-950/30 hover:bg-teal-100 text-teal-700 dark:text-teal-300 font-black rounded-xl transition-all border border-teal-200 dark:border-teal-800/40 text-xs"
+                    title={t('عرض تفاصيل الحضور والانصراف والمؤثرات لهذا الشهر')}
+                  >
+                    <Fingerprint className="w-4 h-4" />
+                    <span>{t('تفاصيل الحضور الشهري')}</span>
+                  </button>
                   <button 
                     onClick={() => {
                       if (selectedPayCard) {
@@ -2608,32 +2761,50 @@ export const Transactions: React.FC = () => {
                     />
                   </div>
 
-                  {/* Earnings Influences */}
-                  <div className="md:col-span-3 border-b-2 border-emerald-50 dark:border-emerald-900/30 pb-3 mt-6 flex items-center gap-3">
-                    <ArrowUpRight className="w-5 h-5 text-emerald-600" />
-                    <h4 className="font-black text-sm uppercase tracking-widest text-emerald-600">{t('المؤثرات الشهرية والإضافات')}</h4>
-                  </div>
-
-                  {/* Absence Days & Auto Fetch */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest mr-2">{t('أيام الغياب')}</label>
-                    <div className="flex gap-2">
-                      <input 
-                        type="number" 
-                        step="0.5"
-                        className="flex-1 px-5 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:border-red-500 outline-none font-bold tabular-nums dark:text-white" 
-                        value={formData.absenceDays || 0} 
-                        onChange={(e) => setFormData({...formData, absenceDays: Number(e.target.value) || 0})} 
-                      />
+                  {/* Earnings Influences Header with Clear Dedicated Auto Fetch Button */}
+                  <div className="md:col-span-3 border-b-2 border-emerald-50 dark:border-emerald-900/30 pb-3 mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <ArrowUpRight className="w-5 h-5 text-emerald-600" />
+                      <h4 className="font-black text-sm uppercase tracking-widest text-emerald-600">{t('المؤثرات الشهرية والإضافات')}</h4>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
                       <button 
                         type="button" 
-                        disabled={isCalculating || !formData.employeeId}
-                        onClick={handleAutomateAttendance}
-                        className="px-4 bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400 rounded-xl hover:bg-teal-100 dark:hover:bg-teal-900/50 transition-all text-xs font-black disabled:opacity-50 border border-teal-100 dark:border-teal-850"
+                        disabled={!formData.employeeId || !formData.month}
+                        onClick={() => {
+                          const emp = employees.find(e => e.id === formData.employeeId);
+                          if (emp) handleOpenAttendanceDetails(emp, formData.month);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-black disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+                        title={t('عرض تفاصيل الحضور والانصراف والإجازات والمأموريات لهذا الشهر')}
                       >
-                        {isCalculating ? t('جاري...') : t('حساب تلقائي')}
+                        <Fingerprint className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                        <span>{t('تفاصيل الحضور الشهري')}</span>
+                      </button>
+                      <button 
+                        type="button" 
+                        id="btn-fetch-monthly-data"
+                        disabled={isCalculating || !formData.employeeId || !formData.month}
+                        onClick={handleAutomateAttendance}
+                        className="relative z-20 flex items-center justify-center gap-2 px-4 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-xl shadow-md shadow-teal-500/20 hover:shadow-teal-500/30 transition-all text-xs font-black disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        title={t('جلب وحساب أيام الحضور والغياب والمأموريات والإجازات والإضافي من سجلات الشهر المحدد')}
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${isCalculating ? 'animate-spin' : ''}`} />
+                        <span>{isCalculating ? t('جاري جلب واحتساب البيانات...') : t('جلب البيانات من الحضور والمؤثرات')}</span>
                       </button>
                     </div>
+                  </div>
+
+                  {/* Absence Days */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest mr-2">{t('أيام الغياب')}</label>
+                    <input 
+                      type="number" 
+                      step="0.5"
+                      className="w-full px-5 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:border-red-500 outline-none font-bold tabular-nums dark:text-white" 
+                      value={formData.absenceDays || 0} 
+                      onChange={(e) => setFormData({...formData, absenceDays: Number(e.target.value) || 0})} 
+                    />
                   </div>
 
                   {/* Unexcused Absence Deduction */}
@@ -3106,6 +3277,11 @@ export const Transactions: React.FC = () => {
           transaction={breakdownTarget.transaction}
           month={selectedMonth}
           systemSettings={systemSettings}
+          onViewAttendanceDetails={() => {
+            if (breakdownTarget.employee) {
+              handleOpenAttendanceDetails(breakdownTarget.employee, selectedMonth);
+            }
+          }}
           extraContext={{
             penaltiesList: (penalties || []).filter(p => 
               p.employeeId === breakdownTarget.employee.id && 
@@ -3126,6 +3302,24 @@ export const Transactions: React.FC = () => {
           }}
         />
       )}
+
+      {/* Monthly Attendance Details Modal */}
+      <MonthlyAttendanceDetailsModal
+        isOpen={isAttendanceModalOpen}
+        onClose={() => {
+          setIsAttendanceModalOpen(false);
+          setAttendanceModalEmployee(null);
+        }}
+        employee={attendanceModalEmployee}
+        month={attendanceModalMonth}
+        attendanceRecords={attendanceRecords}
+        attendanceShifts={attendanceShifts}
+        missions={missions}
+        leaveRequests={leaveRequests}
+        absenceRecords={absenceRecords}
+        absenceTypes={absenceTypes}
+        administrativeNotices={administrativeNotices}
+      />
     </div>
   );
 };

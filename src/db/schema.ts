@@ -70,6 +70,7 @@ export const employees = sqliteTable('employees', {
   insuranceProfile: text('insurance_profile'),
   taxProfile: text('tax_profile'),
   leavePlan: text('leave_plan'),
+  sickLeavePlan: text('sick_leave_plan').default('30'),
   gradeLevel: text('grade_level'),
   subjectToSi: text('subject_to_si').default('No'),
   siNumber: text('si_number'),

@@ -164,6 +164,7 @@ export interface Employee {
   insuranceProfile?: string;
   taxProfile?: string;
   leavePlan?: string;
+  sickLeavePlan?: string;
   gradeLevel?: string;
   subjectToSi?: string;
   siNumber?: string;
@@ -226,9 +227,11 @@ export interface LeaveRequest {
   managerId?: string; // person reviewing
   startDate: string;
   endDate: string;
-  type: string; // Sick, Vacation, etc.
+  daysCount?: number;
+  type: string; // Sick, Vacation, OfficialHoliday, etc.
   reason: string;
   status: 'Pending' | 'Approved' | 'Rejected' | 'Postponed';
+  isPaid?: boolean;
   reviewNote?: string;
   createdAt: string;
   updatedAt: string;

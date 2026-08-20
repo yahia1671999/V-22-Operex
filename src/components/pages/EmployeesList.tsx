@@ -20,7 +20,9 @@ import {
   Clock,
   UserCheck,
   UserX,
-  ShieldCheck
+  ShieldCheck,
+  Activity,
+  HeartPulse
 } from 'lucide-react';
 import { db, collection, setDoc, doc, deleteDoc, OperationType, handleApiError, writeBatch } from '../../api';
 import { useData } from '../../contexts/DataContext';
@@ -79,6 +81,7 @@ export const EmployeesList: React.FC = () => {
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const [viewingEmployee, setViewingEmployee] = useState<Employee | null>(null);
   const [leaveBalanceEmployee, setLeaveBalanceEmployee] = useState<Employee | null>(null);
+  const [leaveBalanceTab, setLeaveBalanceTab] = useState<'vacation' | 'sick'>('vacation');
   const [penaltiesEmployee, setPenaltiesEmployee] = useState<Employee | null>(null);
   const [performanceEmployee, setPerformanceEmployee] = useState<Employee | null>(null);
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
@@ -392,6 +395,7 @@ export const EmployeesList: React.FC = () => {
     insuranceProfile: '',
     taxProfile: '',
     leavePlan: '',
+    sickLeavePlan: '30',
     gradeLevel: '',
     subjectToSi: 'Yes',
     siNumber: '',
@@ -515,6 +519,7 @@ export const EmployeesList: React.FC = () => {
       insuranceProfile: '',
       taxProfile: '',
       leavePlan: '',
+      sickLeavePlan: '30',
       gradeLevel: '',
       subjectToSi: 'Yes',
       siNumber: '',
@@ -725,6 +730,8 @@ export const EmployeesList: React.FC = () => {
     setEditingEmployee(emp);
     setFormData({ 
       ...emp,
+      leavePlan: emp.leavePlan || '',
+      sickLeavePlan: emp.sickLeavePlan || '30',
       allowances: getSafeAllowances(emp.allowances).map(a => ({ ...a, id: a.id || crypto.randomUUID() }))
     });
     setIsModalOpen(true);
@@ -1221,6 +1228,16 @@ export const EmployeesList: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-2">
+                    <label className="text-sm font-bold text-muted-foreground mr-2">{t('رصيد الإجازة المرضية السنوي بالأيام (Annual Sick Leave Balance)')}</label>
+                    <input 
+                      type="number"
+                      placeholder={t('مثال: 30')}
+                      className="w-full px-5 py-3 bg-muted/30 border border-border rounded-none focus:ring-2 focus:ring-primary outline-none font-medium text-foreground"
+                      value={formData.sickLeavePlan || ''}
+                      onChange={(e) => setFormData({...formData, sickLeavePlan: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <label className="text-sm font-bold text-muted-foreground mr-2">{t('الرتبة والدرجة الوظيفية (Grade/Level)')}</label>
                     <input 
                       placeholder={t('مثال: Grade 5, Senior Lead')}
@@ -1671,7 +1688,11 @@ export const EmployeesList: React.FC = () => {
                   </div>
                   <div className="space-y-1 border-b border-border/40 pb-2">
                     <span className="text-xs text-muted-foreground font-bold">{language === 'ar' ? t('رصيد الإجازات السنوية') : 'Annual Leave Balance'}</span>
-                    <p className="font-bold text-foreground">{viewingEmployee.leavePlan ? `${viewingEmployee.leavePlan} يوم` : '—'}</p>
+                    <p className="font-bold text-foreground">{viewingEmployee.leavePlan ? `${viewingEmployee.leavePlan} يوم` : '21 يوم'}</p>
+                  </div>
+                  <div className="space-y-1 border-b border-border/40 pb-2">
+                    <span className="text-xs text-muted-foreground font-bold">{language === 'ar' ? t('رصيد الإجازة المرضية السنوية') : 'Annual Sick Leave Balance'}</span>
+                    <p className="font-bold text-emerald-600">{viewingEmployee.sickLeavePlan ? `${viewingEmployee.sickLeavePlan} يوم` : '30 يوم'}</p>
                   </div>
                   <div className="space-y-1 border-b border-border/40 pb-2">
                     <span className="text-xs text-muted-foreground font-bold">{language === 'ar' ? t('الدرجة والدرجة الوظيفية') : 'Grade / Level'}</span>
@@ -1749,7 +1770,7 @@ export const EmployeesList: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* Annual Leave Balance Popup dialog */}
+      {/* Annual Leave & Sick Leave Balance Popup dialog */}
       <AnimatePresence>
         {leaveBalanceEmployee && (
           <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1757,43 +1778,177 @@ export const EmployeesList: React.FC = () => {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-card w-full max-w-2xl border-t-4 border-emerald-600 rounded-none shadow-2xl overflow-hidden text-right leading-relaxed"
+              className="bg-card w-full max-w-3xl border-t-4 border-emerald-600 rounded-none shadow-2xl overflow-hidden text-right leading-relaxed"
             >
               <div className="bg-emerald-600 text-white px-6 py-4 flex items-center justify-between">
                 <h4 className="font-black text-base flex items-center gap-2">
                   <Calendar className="w-5 h-5 animate-pulse" />
-                  رصيد الإجازات السنوي للموظف: {leaveBalanceEmployee.name} ({leaveBalanceEmployee.jobTitle || t('موظف')})
+                  {t('كارت أرصدة الإجازات السنوية للموظف:')} {leaveBalanceEmployee.name} ({leaveBalanceEmployee.jobTitle || t('موظف')})
                 </h4>
                 <button 
                   onClick={() => setLeaveBalanceEmployee(null)}
-                  className="text-white hover:opacity-80 transition-opacity border-none outline-none"
+                  className="text-white hover:opacity-80 transition-opacity border-none outline-none cursor-pointer"
                 >
                   <CloseIcon className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="p-6 space-y-6 col-span-2">
-                {/* Year Indicator */}
-                <div className="flex items-center justify-between bg-emerald-500/5 p-3 border border-emerald-600/10 text-emerald-950 text-xs font-bold rounded-none">
-                  <span>{t('العام المالي / التقويمي الجاري:')}</span>
-                  <span className="font-black text-sm text-emerald-600">{new Date().getFullYear()} م</span>
+              <div className="p-6 space-y-6">
+                {/* Year Indicator & Annual Renewal Notice */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-muted/40 p-3.5 border border-border text-xs font-bold">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">{t('العام التقويمي الجاري:')}</span>
+                    <span className="font-black text-sm text-emerald-600">{new Date().getFullYear()} م</span>
+                  </div>
+                  <div className="flex items-center justify-between border-r sm:border-r-0 border-border pr-2 sm:pr-0">
+                    <span className="text-muted-foreground">{t('سياسة التجديد السنوي:')}</span>
+                    <span className="font-extrabold text-foreground">{t('يتجدد تلقائياً في 1 يناير')}</span>
+                  </div>
                 </div>
 
-                {/* Balance Metrics Card */}
+                {/* Tab Switcher: Annual Vacation vs Sick Leave */}
+                <div className="flex border-b border-border gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLeaveBalanceTab('vacation')}
+                    className={cn(
+                      "pb-3 px-4 text-xs sm:text-sm font-black transition-all flex items-center gap-2 border-b-2 cursor-pointer",
+                      leaveBalanceTab === 'vacation'
+                        ? "border-emerald-600 text-emerald-600 bg-emerald-500/5"
+                        : "border-transparent text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <Calendar className="w-4 h-4" />
+                    <span>{t('رصيد الإجازة الاعتيادية (السنوية)')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeaveBalanceTab('sick')}
+                    className={cn(
+                      "pb-3 px-4 text-xs sm:text-sm font-black transition-all flex items-center gap-2 border-b-2 cursor-pointer",
+                      leaveBalanceTab === 'sick'
+                        ? "border-blue-600 text-blue-600 bg-blue-500/5"
+                        : "border-transparent text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <HeartPulse className="w-4 h-4" />
+                    <span>{t('رصيد الإجازة المرضية السنوية')}</span>
+                  </button>
+                </div>
+
+                {/* Tab Content */}
                 {(() => {
-                  const entitled = Number(leaveBalanceEmployee.leavePlan || 21);
                   const currentYear = new Date().getFullYear();
-                  
-                  // Filter approved leave requests for this employee in current year
-                  const approvedLeaves = (leaveRequests || []).filter(lr => 
+                  const isSickTab = leaveBalanceTab === 'sick';
+
+                  if (isSickTab) {
+                    // Sick Leave Calculations
+                    const entitledSick = Number(leaveBalanceEmployee.sickLeavePlan || 30);
+                    const approvedSickLeaves = (leaveRequests || []).filter(lr => 
+                      lr.employeeId === leaveBalanceEmployee.id &&
+                      lr.status === 'Approved' &&
+                      (lr.type === 'Sick' || lr.type === 'مرضية' || lr.type === 'إجازة مرضية' || lr.type === t('إجازة مرضية') || lr.type === t('مرضية')) &&
+                      (lr.startDate && lr.startDate.startsWith(String(currentYear)))
+                    );
+
+                    const consumedSick = approvedSickLeaves.reduce((sum, lr) => {
+                      const s = new Date(lr.startDate);
+                      const e = new Date(lr.endDate);
+                      const dTime = e.getTime() - s.getTime();
+                      const days = dTime < 0 ? 0 : Math.ceil(dTime / (1000 * 60 * 60 * 24)) + 1;
+                      return sum + days;
+                    }, 0);
+
+                    const remainingSick = entitledSick - consumedSick;
+
+                    return (
+                      <div className="space-y-6">
+                        {/* Notice Banner */}
+                        <div className="p-3 bg-blue-500/10 border border-blue-500/20 text-blue-900 dark:text-blue-200 text-xs font-bold flex items-center gap-2">
+                          <HeartPulse className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                          <span>{t('الإجازة المرضية المعتمدة تخصم من الرصيد المرضي فقط ولا تخصم من رصيد الإجازات الاعتيادية.')}</span>
+                        </div>
+
+                        {/* Sick Balance Metrics */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                          <div className="bg-blue-600/5 border border-blue-600/15 p-4 text-right">
+                            <span className="text-[10px] text-blue-600 font-black uppercase block mb-1">{t('المستحق (السنوي الجاري)')}</span>
+                            <span className="text-2xl font-black text-blue-700 dark:text-blue-400">{entitledSick}</span> <span className="text-xs text-blue-700 dark:text-blue-400 font-bold">{t('يوم')}</span>
+                          </div>
+                          <div className="bg-red-600/5 border border-red-600/15 p-4 text-right">
+                            <span className="text-[10px] text-red-600 font-black uppercase block mb-1">{t('المستخدم (المعتمد فقط)')}</span>
+                            <span className="text-2xl font-black text-red-700 dark:text-red-400">{consumedSick}</span> <span className="text-xs text-red-700 dark:text-red-400 font-bold">{t('يوم')}</span>
+                          </div>
+                          <div className="bg-emerald-600/5 border border-emerald-600/15 p-4 text-right">
+                            <span className="text-[10px] text-emerald-600 font-black uppercase block mb-1">{t('المتبقي المتاح للتسجيل')}</span>
+                            <span className={cn(
+                              "text-2xl font-black",
+                              remainingSick >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"
+                            )}>{remainingSick}</span> <span className="text-xs text-emerald-700 dark:text-emerald-400 font-bold">{t('يوم')}</span>
+                          </div>
+                          <div className="bg-muted/40 border border-border p-4 text-right">
+                            <span className="text-[10px] text-muted-foreground font-black uppercase block mb-1">{t('التجديد السنوي')}</span>
+                            <span className="text-xs font-black text-foreground block mt-1">{t('1 يناير')} {currentYear + 1}</span>
+                            <span className="text-[10px] text-muted-foreground">{t('رصيد سنوي متجدد')}</span>
+                          </div>
+                        </div>
+
+                        {/* Sick Leaves Table */}
+                        <div className="space-y-2">
+                          <h5 className="font-black text-xs text-foreground mr-1 flex items-center gap-1.5">
+                            <HeartPulse className="w-3.5 h-3.5 text-blue-600" />
+                            {t('سجل الإجازات المرضية المعتمدة خلال العام')} {currentYear}:
+                          </h5>
+                          {approvedSickLeaves.length === 0 ? (
+                            <div className="border border-dashed border-border p-6 text-center text-xs font-bold text-muted-foreground bg-muted/20">
+                              {t('لا توجد إجازات مرضية معتمدة مسجلة لهذا الموظف خلال العام')} {currentYear}.
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto border border-border">
+                              <table className="w-full text-right text-xs text-foreground">
+                                <thead className="bg-muted text-muted-foreground font-black border-b border-border">
+                                  <tr>
+                                    <th className="p-3 text-right">{t('تاريخ البدء')}</th>
+                                    <th className="p-3 text-right">{t('تاريخ الانتهاء')}</th>
+                                    <th className="p-3 text-right">{t('عدد الأيام المستهلكة')}</th>
+                                    <th className="p-3 text-right">{t('السبب / التقرير الطبي')}</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border font-medium">
+                                  {approvedSickLeaves.map((lr) => {
+                                    const s = new Date(lr.startDate);
+                                    const e = new Date(lr.endDate);
+                                    const dTime = e.getTime() - s.getTime();
+                                    const days = dTime < 0 ? 0 : Math.ceil(dTime / (1000 * 60 * 60 * 24)) + 1;
+
+                                    return (
+                                      <tr key={lr.id} className="hover:bg-muted/30">
+                                        <td className="p-3 font-mono font-bold text-foreground">{lr.startDate}</td>
+                                        <td className="p-3 font-mono font-bold text-foreground">{lr.endDate}</td>
+                                        <td className="p-3 font-bold text-blue-600">{days} {t('يوم')}</td>
+                                        <td className="p-3 text-muted-foreground max-w-xs truncate" title={lr.reason}>{lr.reason || '—'}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Vacation / Annual Leave Calculations
+                  const entitledVacation = Number(leaveBalanceEmployee.leavePlan || 21);
+                  const approvedVacationLeaves = (leaveRequests || []).filter(lr => 
                     lr.employeeId === leaveBalanceEmployee.id &&
                     lr.status === 'Approved' &&
-                    (lr.type === 'Vacation' || lr.type === 'Annual' || lr.type === t('إجازة اعتيادية') || lr.type === t('اعتيادي')) &&
+                    (lr.type === 'Vacation' || lr.type === 'Annual' || lr.type === t('إجازة اعتيادية') || lr.type === t('اعتيادي') || lr.type === 'إجازة اعتيادية' || lr.type === 'اعتيادي' || lr.type === 'اعتيادية') &&
                     (lr.startDate && lr.startDate.startsWith(String(currentYear)))
                   );
 
-                  // Calculate consumed days
-                  const consumed = approvedLeaves.reduce((sum, lr) => {
+                  const consumedVacation = approvedVacationLeaves.reduce((sum, lr) => {
                     const s = new Date(lr.startDate);
                     const e = new Date(lr.endDate);
                     const dTime = e.getTime() - s.getTime();
@@ -1801,31 +1956,49 @@ export const EmployeesList: React.FC = () => {
                     return sum + days;
                   }, 0);
 
-                  const remaining = entitled - consumed;
+                  const remainingVacation = entitledVacation - consumedVacation;
 
                   return (
                     <div className="space-y-6">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="bg-blue-600/5 border border-blue-600/10 p-4 rounded-none text-right">
-                          <span className="text-[10px] text-blue-600 font-extrabold uppercase block mb-1">{t('الرصيد المستحق (السنوي الجاري)')}</span>
-                          <span className="text-2xl font-black text-blue-700">{entitled}</span> <span className="text-xs text-blue-700 font-bold">{t('يوم')}</span>
+                      {/* Notice Banner */}
+                      <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 dark:text-emerald-200 text-xs font-bold flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                        <span>{t('الإجازة الاعتيادية تخصم حصراً من رصيد الإجازات السنوي الاعتيادي.')}</span>
+                      </div>
+
+                      {/* Vacation Balance Metrics */}
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div className="bg-blue-600/5 border border-blue-600/15 p-4 text-right">
+                          <span className="text-[10px] text-blue-600 font-black uppercase block mb-1">{t('المستحق (السنوي الجاري)')}</span>
+                          <span className="text-2xl font-black text-blue-700 dark:text-blue-400">{entitledVacation}</span> <span className="text-xs text-blue-700 dark:text-blue-400 font-bold">{t('يوم')}</span>
                         </div>
-                        <div className="bg-red-600/5 border border-red-600/10 p-4 rounded-none text-right">
-                          <span className="text-[10px] text-red-600 font-extrabold uppercase block mb-1">{t('الرصيد المستهلك (المعتمد فقط)')}</span>
-                          <span className="text-2xl font-black text-red-700">{consumed}</span> <span className="text-xs text-red-700 font-bold">{t('يوم')}</span>
+                        <div className="bg-red-600/5 border border-red-600/15 p-4 text-right">
+                          <span className="text-[10px] text-red-600 font-black uppercase block mb-1">{t('المستخدم (المعتمد فقط)')}</span>
+                          <span className="text-2xl font-black text-red-700 dark:text-red-400">{consumedVacation}</span> <span className="text-xs text-red-700 dark:text-red-400 font-bold">{t('يوم')}</span>
                         </div>
-                        <div className="bg-emerald-600/5 border border-emerald-600/10 p-4 rounded-none text-right">
-                          <span className="text-[10px] text-emerald-600 font-extrabold uppercase block mb-1">{t('الرصيد المتاح المتبقي للتسجيل')}</span>
-                          <span className="text-2xl font-black text-emerald-700">{remaining}</span> <span className="text-xs text-emerald-700 font-bold">{t('يوم')}</span>
+                        <div className="bg-emerald-600/5 border border-emerald-600/15 p-4 text-right">
+                          <span className="text-[10px] text-emerald-600 font-black uppercase block mb-1">{t('المتبقي المتاح للتسجيل')}</span>
+                          <span className={cn(
+                            "text-2xl font-black",
+                            remainingVacation >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"
+                          )}>{remainingVacation}</span> <span className="text-xs text-emerald-700 dark:text-emerald-400 font-bold">{t('يوم')}</span>
+                        </div>
+                        <div className="bg-muted/40 border border-border p-4 text-right">
+                          <span className="text-[10px] text-muted-foreground font-black uppercase block mb-1">{t('التجديد السنوي')}</span>
+                          <span className="text-xs font-black text-foreground block mt-1">{t('1 يناير')} {currentYear + 1}</span>
+                          <span className="text-[10px] text-muted-foreground">{t('رصيد سنوي متجدد')}</span>
                         </div>
                       </div>
 
                       {/* Leaves Grid list (Approved only) */}
                       <div className="space-y-2">
-                        <h5 className="font-extrabold text-xs text-muted-foreground mr-1">{t('الإجازات السنوية المعتمدة والتفصيلية:')}</h5>
-                        {approvedLeaves.length === 0 ? (
+                        <h5 className="font-black text-xs text-foreground mr-1 flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                          {t('سجل الإجازات الاعتيادية المعتمدة خلال العام')} {currentYear}:
+                        </h5>
+                        {approvedVacationLeaves.length === 0 ? (
                           <div className="border border-dashed border-border p-6 text-center text-xs font-bold text-muted-foreground bg-muted/20">
-                            لا توجد إجازات سنوية معتمدة مسجلة لهذا الموظف خلال العام {currentYear} حتى الآن.
+                            {t('لا توجد إجازات اعتيادية معتمدة مسجلة لهذا الموظف خلال العام')} {currentYear}.
                           </div>
                         ) : (
                           <div className="overflow-x-auto border border-border">
@@ -1839,7 +2012,7 @@ export const EmployeesList: React.FC = () => {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-border font-medium">
-                                {approvedLeaves.map((lr) => {
+                                {approvedVacationLeaves.map((lr) => {
                                   const s = new Date(lr.startDate);
                                   const e = new Date(lr.endDate);
                                   const dTime = e.getTime() - s.getTime();
@@ -1849,7 +2022,7 @@ export const EmployeesList: React.FC = () => {
                                     <tr key={lr.id} className="hover:bg-muted/30">
                                       <td className="p-3 font-mono font-bold text-foreground">{lr.startDate}</td>
                                       <td className="p-3 font-mono font-bold text-foreground">{lr.endDate}</td>
-                                      <td className="p-3 font-bold text-emerald-600">{days} يوم</td>
+                                      <td className="p-3 font-bold text-emerald-600">{days} {t('يوم')}</td>
                                       <td className="p-3 text-muted-foreground max-w-xs truncate" title={lr.reason}>{lr.reason || '—'}</td>
                                     </tr>
                                   );
@@ -1866,7 +2039,7 @@ export const EmployeesList: React.FC = () => {
                 <div className="flex justify-end border-t border-border pt-4">
                   <button 
                     onClick={() => setLeaveBalanceEmployee(null)}
-                    className="p-3 px-5 bg-muted hover:bg-muted/80 text-foreground font-black text-xs rounded-none border-none cursor-pointer"
+                    className="p-3 px-6 bg-muted hover:bg-muted/80 text-foreground font-black text-xs rounded-none border-none cursor-pointer"
                   >{t('إغلاق النافذة')}</button>
                 </div>
               </div>

@@ -1421,7 +1421,7 @@ export const Operations: React.FC = () => {
                                      value={addExistingProjectScopeInput} 
                                      onChange={(e) => setAddExistingProjectScopeInput(e.target.value)}
                                      placeholder={t('أدخل عنوان النطاق الجديد (مثل: تصميم الهوية، البرمجة الخلفية...)')}
-                                     className="flex-1 px-4 py-2.5 bg-white border border-blue-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                                     className="flex-1 px-4 py-2.5 bg-card text-foreground border border-border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
                                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddScopeToProject(); } }}
                                   />
                                   <button 
@@ -1439,9 +1439,9 @@ export const Operations: React.FC = () => {
 
                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {selectedProject.scope?.map((s: any) => (
-                               <div key={s.id} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between gap-4 group hover:border-blue-200 transition-all">
+                               <div key={s.id} className="bg-card text-foreground p-5 rounded-3xl border border-border shadow-sm flex items-center justify-between gap-4 group hover:border-primary/50 transition-all">
                                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                                     <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shrink-0">
+                                     <div className="w-10 h-10 bg-primary/10 text-primary rounded-xl flex items-center justify-center shrink-0">
                                         <Check className="w-5 h-5" />
                                      </div>
                                      
@@ -1578,7 +1578,7 @@ export const Operations: React.FC = () => {
                             setTaskForm({ ...taskForm, phase: selectedProject.phases?.[0] || '' });
                             setIsTaskModalOpen(true);
                           }}
-                          className="bg-white border border-gray-100 px-6 py-3 rounded-2xl font-black text-blue-600 hover:bg-blue-50 transition-all flex items-center gap-2 shadow-sm whitespace-nowrap cursor-pointer"
+                          className="bg-card text-primary border border-border px-6 py-3 rounded-2xl font-black hover:bg-primary/10 transition-all flex items-center gap-2 shadow-sm whitespace-nowrap cursor-pointer"
                         >
                           <Plus className="w-5 h-5" />{t('إضافة مهمة')}</button>
                       )}
@@ -1588,10 +1588,10 @@ export const Operations: React.FC = () => {
                   <div className="flex gap-6 overflow-x-auto pb-8 snap-x custom-scrollbar">
                     {selectedProject.phases?.map(phaseName => (
                       <div key={phaseName} className="min-w-[320px] max-w-[320px] snap-center space-y-4">
-                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between group">
+                        <div className="p-4 bg-muted rounded-2xl border border-border flex items-center justify-between group">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <Layers className="w-5 h-5 text-blue-600 shrink-0" />
-                            <span className="font-black text-gray-900 truncate">{phaseName}</span>
+                            <Layers className="w-5 h-5 text-primary shrink-0" />
+                            <span className="font-black text-foreground truncate">{phaseName}</span>
                           </div>
                           
                           <div className="flex items-center gap-1.5">
@@ -1604,7 +1604,7 @@ export const Operations: React.FC = () => {
                                     setEditingPhaseNewName(phaseName);
                                     setIsPhaseModalOpen(true);
                                   }}
-                                  className="p-1 text-blue-600 hover:bg-blue-100/50 rounded-lg transition-colors"
+                                  className="p-1 text-primary hover:bg-primary/10 rounded-lg transition-colors"
                                   title={t('تعديل المرحلة')}
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
@@ -1612,14 +1612,14 @@ export const Operations: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => handleDeletePhase(phaseName)}
-                                  className="p-1 text-red-500 hover:bg-red-100/50 rounded-lg transition-colors"
+                                  className="p-1 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
                                   title={t('حذف المرحلة')}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             )}
-                            <span className="text-xs font-black text-gray-400 bg-white px-2 py-0.5 rounded-lg border border-gray-100 shrink-0">
+                            <span className="text-xs font-black text-muted-foreground bg-card px-2 py-0.5 rounded-lg border border-border shrink-0">
                               {projectSpecificTasks.filter(t => t.phase === phaseName && !t.parentTaskId).length}
                             </span>
                           </div>
@@ -2895,17 +2895,17 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-3xl border border-gray-200/80 shadow-xs hover:shadow-md transition-all overflow-hidden">
+    <div className="bg-card text-foreground rounded-3xl border border-border shadow-xs hover:shadow-md transition-all overflow-hidden">
       {/* Header Banner */}
-      <div className="p-6 md:p-8 bg-gradient-to-r from-slate-50 via-white to-blue-50/40 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="p-6 md:p-8 bg-muted/50 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1.5 flex-1">
           <div className="flex items-center gap-2.5 flex-wrap">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-100/70 text-blue-800 rounded-xl text-xs font-black">
-              <Calendar className="w-3.5 h-3.5 text-blue-600" />
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-primary/10 text-primary rounded-xl text-xs font-black">
+              <Calendar className="w-3.5 h-3.5 text-primary" />
               {visit.formattedArabicDate || visit.date}
             </span>
-            <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100/80 text-emerald-800 rounded-xl text-xs font-bold">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs font-bold">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               {t('مأمورية معتمدة ومكتملة')}
             </span>
           </div>
@@ -2915,11 +2915,11 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
               type="text"
               value={localTitle}
               onChange={(e) => setLocalTitle(e.target.value)}
-              className="text-lg md:text-xl font-black text-gray-900 bg-white px-3 py-1.5 border border-blue-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 w-full mt-1"
+              className="text-lg md:text-xl font-black text-foreground bg-card px-3 py-1.5 border border-primary rounded-xl outline-none focus:ring-2 focus:ring-primary w-full mt-1"
               placeholder={t('عنوان الزيارة')}
             />
           ) : (
-            <h4 className="text-lg md:text-xl font-black text-gray-900 tracking-tight pt-1">
+            <h4 className="text-lg md:text-xl font-black text-foreground tracking-tight pt-1">
               {localTitle}
             </h4>
           )}
@@ -2932,7 +2932,7 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
               href={localUrl.startsWith('http') ? localUrl : `https://${localUrl}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-black shadow-xs transition-all hover:scale-105"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-2xl text-xs font-black shadow-xs transition-all hover:scale-105"
             >
               <ExternalLink className="w-4 h-4" />
               <span>{t('فتح محضر الاجتماع والمرفقات')}</span>
@@ -2952,7 +2952,7 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
               className={`inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-xs font-black transition-all ${
                 isEditing
                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  : 'bg-muted hover:bg-muted/80 text-foreground'
               }`}
             >
               {isSaving ? (
@@ -2988,15 +2988,15 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
         {/* Attending Employees list */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-black text-gray-500 flex items-center gap-1.5">
-              <User className="w-4 h-4 text-blue-600" />
+            <label className="text-xs font-black text-muted-foreground flex items-center gap-1.5">
+              <User className="w-4 h-4 text-primary" />
               <span>{t('الموظفون المشاركون في الزيارة في هذا اليوم')} ({attendingEmployees.length})</span>
             </label>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {attendingEmployees.map(emp => (
-              <div key={emp.id} className="flex items-center gap-3 p-3 rounded-2xl bg-gray-50/80 border border-gray-200/70 hover:bg-blue-50/40 transition-colors">
+              <div key={emp.id} className="flex items-center gap-3 p-3 rounded-2xl bg-muted/60 border border-border hover:bg-muted transition-colors">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center font-black text-xs shadow-xs shrink-0">
                   {emp.avatar ? (
                     <img src={emp.avatar} alt={emp.name} className="w-full h-full object-cover rounded-xl" />
@@ -3005,13 +3005,13 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-black text-gray-900 truncate">{emp.name}</p>
-                  <p className="text-[10px] font-bold text-gray-400 truncate">{emp.jobTitle}</p>
+                  <p className="text-xs font-black text-foreground truncate">{emp.name}</p>
+                  <p className="text-[10px] font-bold text-muted-foreground truncate">{emp.jobTitle}</p>
                 </div>
               </div>
             ))}
             {attendingEmployees.length === 0 && (
-              <p className="text-xs text-gray-400 font-medium italic">{t('لم يتم تسجيل موظفين محددين')}</p>
+              <p className="text-xs text-muted-foreground font-medium italic">{t('لم يتم تسجيل موظفين محددين')}</p>
             )}
           </div>
         </div>
@@ -3019,10 +3019,10 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
         {/* Mission Objectives / Destinations tags if available */}
         {(visit.reasons && visit.reasons.length > 0) && (
           <div className="space-y-1.5">
-            <label className="text-[11px] font-black text-gray-400 block">{t('أهداف وغايات الزيارة الميدانية:')}</label>
+            <label className="text-[11px] font-black text-muted-foreground block">{t('أهداف وغايات الزيارة الميدانية:')}</label>
             <div className="flex flex-wrap gap-2">
               {visit.reasons.map((r, i) => (
-                <span key={i} className="px-3 py-1 rounded-xl bg-blue-50 border border-blue-100 text-blue-700 text-xs font-semibold">
+                <span key={i} className="px-3 py-1 rounded-xl bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
                   {r}
                 </span>
               ))}
@@ -3032,26 +3032,26 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
 
         {/* Meeting Minutes Section */}
         <div className="space-y-2">
-          <label className="text-xs font-black text-gray-700 flex items-center gap-1.5">
-            <FileText className="w-4 h-4 text-indigo-600" />
+          <label className="text-xs font-black text-foreground flex items-center gap-1.5">
+            <FileText className="w-4 h-4 text-primary" />
             <span>{t('محضر الاجتماع / تفاصيل وملاحظات الزيارة:')}</span>
           </label>
 
           {isPM && isEditing ? (
             <textarea
-              className="w-full bg-gray-50 p-4 rounded-2xl border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500 font-medium text-gray-800 text-right min-h-[120px] resize-y text-sm leading-relaxed"
+              className="w-full bg-card p-4 rounded-2xl border border-border outline-none focus:ring-2 focus:ring-primary font-medium text-foreground text-right min-h-[120px] resize-y text-sm leading-relaxed"
               placeholder={t('اكتب تفاصيل محضر الاجتماع وما تم الاتفاق عليه خلال هذه الزيارة...')}
               value={localMinutes}
               onChange={(e) => setLocalMinutes(e.target.value)}
             />
           ) : (
-            <div className="p-4 bg-gray-50/80 rounded-2xl border border-gray-200/80 min-h-[70px]">
+            <div className="p-4 bg-muted/60 rounded-2xl border border-border min-h-[70px]">
               {localMinutes ? (
-                <p className="text-gray-700 text-sm font-medium whitespace-pre-wrap leading-relaxed">
+                <p className="text-foreground text-sm font-medium whitespace-pre-wrap leading-relaxed">
                   {localMinutes}
                 </p>
               ) : (
-                <p className="text-gray-400 text-xs font-medium italic">
+                <p className="text-muted-foreground text-xs font-medium italic">
                   {t('لا توجد تفاصيل أو محضر اجتماع مسجل لهذه الزيارة حتى الآن.')}
                 </p>
               )}
@@ -3060,9 +3060,9 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
         </div>
 
         {/* Attachment URL / Link to Minutes */}
-        <div className="space-y-2 pt-2 border-t border-gray-100">
-          <label className="text-xs font-black text-gray-700 flex items-center gap-1.5">
-            <Paperclip className="w-4 h-4 text-blue-600" />
+        <div className="space-y-2 pt-2 border-t border-border">
+          <label className="text-xs font-black text-foreground flex items-center gap-1.5">
+            <Paperclip className="w-4 h-4 text-primary" />
             <span>{t('رابط مرفق محضر الاجتماع أو المستندات (Google Drive / OneDrive / Cloud Link):')}</span>
           </label>
 
@@ -3073,7 +3073,7 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
                 value={localUrl}
                 onChange={(e) => setLocalUrl(e.target.value)}
                 placeholder="https://drive.google.com/file/d/..."
-                className="flex-1 bg-gray-50 px-4 py-2.5 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500 text-xs font-mono text-gray-700"
+                className="flex-1 bg-card px-4 py-2.5 rounded-xl border border-border outline-none focus:ring-2 focus:ring-primary text-xs font-mono text-foreground"
                 dir="ltr"
               />
             </div>
@@ -3084,14 +3084,14 @@ const ProjectVisitCardItem: React.FC<ProjectVisitCardItemProps> = ({
                   href={localUrl.startsWith('http') ? localUrl : `https://${localUrl}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold border border-blue-200 transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-xs font-bold border border-primary/20 transition-colors"
                   dir="ltr"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   <span className="truncate max-w-xs">{localUrl}</span>
                 </a>
               ) : (
-                <span className="text-xs text-gray-400 italic">
+                <span className="text-xs text-muted-foreground italic">
                   {t('لم يتم إرفاق رابط لمحضر الاجتماع')}
                 </span>
               )}

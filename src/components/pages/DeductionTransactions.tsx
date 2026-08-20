@@ -224,15 +224,15 @@ export const DeductionTransactions: React.FC = () => {
         compSi = siBase * (compPct / 100);
       }
 
-      // --- B. Taxes (الضرائب - كسب العمل ورسوم أخرى) ---
+      // --- B. Taxes (ضريبة كسب العمل فقط) ---
       let empTax = 0;
       let compTax = 0;
       
       const taxType = deductionTypes.find(dtype => 
-        (dtype.category === 'ضريبة كسب العمل' || dtype.category === t('ضريبة كسب العمل') || dtype.category === t('ضرائب')) && 
+        (dtype.category === 'ضريبة كسب العمل' || dtype.category === t('ضريبة كسب العمل') || dtype.category === 'كسب العمل') && 
         dtype.status === 'Active'
       );
-      if (emp.subjectToTax !== 'No') {
+      if (emp.subjectToTax !== 'No' && emp.taxExempt !== 'Yes') {
         // Simple Work Gain tax formulation (tax bracket or flat percentage)
         const flatTaxPct = taxType ? (Number(taxType.percentage) || Number(taxType.employeePercentage) || 10) : 10;
         empTax = grossBase * (flatTaxPct / 100);
@@ -278,7 +278,7 @@ export const DeductionTransactions: React.FC = () => {
           if (type.category === t('تأمينات')) {
             empSi = Number(line.calculatedValue) || empSi;
             compSi = Number(line.companyValue) || compSi;
-          } else if (type.category === t('ضرائب') || type.category === 'ضريبة كسب العمل' || type.category === t('ضريبة كسب العمل')) {
+          } else if (type.category === 'ضريبة كسب العمل' || type.category === t('ضريبة كسب العمل') || type.category === 'كسب العمل') {
             empTax = Number(line.calculatedValue) || empTax;
             compTax = Number(line.companyValue) || compTax;
           } else if (type.category === t('سلف وقروض')) {
