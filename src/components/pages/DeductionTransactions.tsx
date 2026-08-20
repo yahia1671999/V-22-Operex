@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../AuthContext';
 import { useData } from '../../contexts/DataContext';
+import { safeEvaluateArithmetic } from '../../utils/safeMath';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   FileText, 
@@ -47,6 +48,8 @@ interface DeductionType {
   chargeType: string;
   employeePercentage: number;
   companyPercentage: number;
+  employeeAmount?: number;
+  companyAmount?: number;
 }
 
 interface Employee {
@@ -63,6 +66,8 @@ interface Employee {
   departmentId: string;
   subjectToSi: string;
   subjectToTax: string;
+  taxExempt?: string;
+  activeDeductions?: string[] | string;
 }
 
 interface DeductionLine {
@@ -78,10 +83,19 @@ interface DeductionLine {
 interface Penalty {
   id: string;
   employeeId: string;
-  violationDate: string;
-  deductionDays: number;
-  amount: number;
+  violationDate?: string;
+  penaltyDate?: string;
+  targetMonth?: string;
+  deductionDays?: number;
+  deductionType?: string;
+  deductionValue?: number;
+  penaltyType?: string;
+  amount?: number;
   status: string;
+  hasGrievance?: boolean;
+  grievanceStatus?: string;
+  postGrievancePenaltyType?: string;
+  postGrievanceDeductionValue?: number;
 }
 
 interface DeductionTransaction {
@@ -99,7 +113,8 @@ export const DeductionTransactions: React.FC = () => {
   const { 
     transactions: payrollTransactions, 
     employees: allDbEmployees, 
-    adminDepartments: dbDepartments 
+    adminDepartments: dbDepartments,
+    penalties: dbPenalties
   } = useData();
 
   // Filter States
@@ -114,6 +129,7 @@ export const DeductionTransactions: React.FC = () => {
   const [deductionLines, setDeductionLines] = useState<DeductionLine[]>([]);
   const [deductionTransactions, setDeductionTransactions] = useState<DeductionTransaction[]>([]);
   const [penalties, setPenalties] = useState<Penalty[]>([]);
+  const [financialAdvancesList, setFinancialAdvancesList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -147,11 +163,12 @@ export const DeductionTransactions: React.FC = () => {
       const token = localStorage.getItem('auth_token');
       const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-      const [resTypes, resLines, resPenalties, resTransactions] = await Promise.all([
+      const [resTypes, resLines, resPenalties, resTransactions, resAdvances] = await Promise.all([
         fetch('/api/deduction-types', { headers: authHeaders }),
         fetch('/api/deduction-transaction-lines', { headers: authHeaders }),
         fetch('/api/penalties', { headers: authHeaders }),
-        fetch('/api/deduction-transactions', { headers: authHeaders })
+        fetch('/api/deduction-transactions', { headers: authHeaders }),
+        fetch('/api/financial-advances', { headers: authHeaders })
       ]).catch(() => {
         throw new Error(isRtl ? t('فشل الاتصال بالخادم وتحميل البيانات') : 'Failed to retrieve database collections');
       });
@@ -164,11 +181,13 @@ export const DeductionTransactions: React.FC = () => {
       const linesData = await resLines.json();
       const penaltiesData = resPenalties.ok ? await resPenalties.json() : [];
       const transactionsData = resTransactions.ok ? await resTransactions.json() : [];
+      const advancesData = resAdvances.ok ? await resAdvances.json() : [];
 
       setDeductionTypes(typesData);
       setDeductionLines(linesData);
       setPenalties(penaltiesData);
       setDeductionTransactions(transactionsData);
+      setFinancialAdvancesList(advancesData);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -180,9 +199,44 @@ export const DeductionTransactions: React.FC = () => {
     fetchData();
   }, []);
 
+  // Helper to calculate total financial penalties for an employee in target month
+  const getApprovedPenaltiesSum = (employeeId: string, monthStr: string, empList: any[], penList: any[]) => {
+    if (!penList || penList.length === 0) return 0;
+    const emp = empList.find(e => e.id === employeeId || e.employeeId === employeeId);
+    if (!emp) return 0;
+    const basic = Number(emp.basicSalary) || 0;
+
+    return penList
+      .filter(p => 
+        (p.employeeId === employeeId || p.employee_id === employeeId || p.employeeId === emp.id || p.employeeId === emp.employeeId) && 
+        p.status === 'Approved' && 
+        (p.targetMonth === monthStr || (p.penaltyDate && p.penaltyDate.startsWith(monthStr)) || (p.violationDate && p.violationDate.startsWith(monthStr)))
+      )
+      .reduce((sum, p) => {
+        if (p.hasGrievance && p.grievanceStatus === 'Accepted_Cancelled') {
+          return sum; // التظلم ألغى الجزاء
+        }
+        let pType = p.penaltyType;
+        let dVal = Number(p.deductionValue || p.amount) || 0;
+        if (p.hasGrievance && p.grievanceStatus === 'Accepted_Modified') {
+          pType = p.postGrievancePenaltyType || pType;
+          dVal = Number(p.postGrievanceDeductionValue) || dVal;
+        }
+
+        if (pType === 'Amount Deduction' || p.deductionType === 'Amount' || (!pType && !p.deductionType && p.amount)) {
+          return sum + dVal;
+        } else if (pType === 'Day Deduction' || p.deductionType === 'Days' || p.deductionDays) {
+          const days = Number(p.deductionDays || dVal) || 0;
+          return sum + Number(((basic / 30) * days).toFixed(2));
+        }
+        return sum + dVal;
+      }, 0);
+  };
+
   // Compute final detailed report rows based on selected target month, filters, and dynamic calculations
   const reportData = useMemo(() => {
     const periodString = `${targetYear}-${targetMonth}`;
+    const activePenaltiesList = penalties.length > 0 ? penalties : (dbPenalties || []);
 
     // 1. Get filtered employee list based on department selection
     const filteredEmployees = allDbEmployees.filter(emp => {
@@ -190,114 +244,262 @@ export const DeductionTransactions: React.FC = () => {
       return emp.departmentId === selectedDept;
     });
 
-    // 3. For every employee, construct detailed deduction records
+    // 2. For every employee, construct detailed deduction records matching Deduction Master & Payroll Transactions
     const rows = filteredEmployees.map(emp => {
       const dept = dbDepartments.find(d => d.id === emp.departmentId);
-      const payrollTx = payrollTransactions.find(t => t.employeeId === emp.id && t.month === periodString);
+      const payrollTx = payrollTransactions.find(t => 
+        (t.employeeId === emp.id || t.employeeId === emp.employeeId) && 
+        (t.month === periodString || t.month === `${targetYear}-${parseInt(targetMonth, 10)}`)
+      );
       
       const basicSalary = Number(emp.basicSalary) || 0;
-      const grossBase = basicSalary + (payrollTx ? (
-        (Number(payrollTx.housingAllowance) || 0) +
-        (Number(payrollTx.transportAllowance) || 0) +
-        (Number(payrollTx.subsistenceAllowance) || 0) +
-        (Number(payrollTx.mobileAllowance) || 0) +
-        (Number(payrollTx.managementAllowance) || 0) +
-        (Number(payrollTx.otherAllowances) || 0)
-      ) : 0);
+      const housing = Number(payrollTx ? payrollTx.housingAllowance : (emp.housingAllowance || 0)) || 0;
+      const transport = Number(payrollTx ? payrollTx.transportAllowance : (emp.transportAllowance || 0)) || 0;
+      const subsistence = Number(payrollTx ? payrollTx.subsistenceAllowance : (emp.subsistenceAllowance || 0)) || 0;
+      const mobile = Number(payrollTx ? payrollTx.mobileAllowance : (emp.mobileAllowance || 0)) || 0;
+      const management = Number(payrollTx ? payrollTx.managementAllowance : (emp.managementAllowance || 0)) || 0;
+      const otherAlls = Number(payrollTx ? (payrollTx.otherAllowances || 0) : (emp.otherAllowances || 0)) || 0;
+      
+      const grossBase = basicSalary + housing + transport + subsistence + mobile + management + otherAlls;
+      const siBase = basicSalary + housing;
 
-      // --- A. Social Insurance (التأمينات الاجتماعية) ---
-      // Employee share from transactions fallback, or dynamic calculated share if eligible (subjectToSi === 'Yes')
-      let empSi = payrollTx ? (Number(payrollTx.socialInsurance) || 0) : 0;
-      let compSi = 0;
+      // Dynamic calculation according to Deduction Master rules
+      let dynamicSiEmp = 0;
+      let dynamicSiComp = 0;
+      let dynamicTaxEmp = 0;
+      let dynamicTaxComp = 0;
+      let dynamicOtherEmp = 0;
+      let dynamicOtherComp = 0;
 
-      // Look up if there's any explicit social insurance configuration in deductionTypes
-      const siType = deductionTypes.find(dtype => dtype.category === t('تأمينات') && dtype.status === 'Active');
-      if (siType && emp.subjectToSi !== 'No') {
-        const empPct = Number(siType.employeePercentage) || 0;
-        const compPct = Number(siType.companyPercentage) || 0;
-        
-        // Calculate GOSI (usually based on basicSalary + housing)
-        const siBase = basicSalary + (payrollTx ? (Number(payrollTx.housingAllowance) || 0) : 0);
-        if (empSi === 0) {
-          empSi = siBase * (empPct / 100);
+      const activeDeductionsList = (deductionTypes || []).filter(dt => dt.status === 'Active');
+
+      activeDeductionsList.forEach(dt => {
+        const dtCat = String(dt.category || '').toLowerCase().trim();
+
+        const isSocialInsurance = 
+          dtCat === 'تأمينات' || 
+          dtCat === 'تأمينات اجتماعية' || 
+          dtCat === 'social insurance' || 
+          dtCat === 'social_insurance' || 
+          dtCat === 'insurance' || 
+          dtCat === t('تأمينات');
+
+        const isIncomeTax = 
+          !isSocialInsurance && (
+            dtCat === 'ضريبة كسب العمل' || 
+            dtCat === 'كسب العمل' || 
+            dtCat === 'ضريبة كسب عمل' || 
+            dtCat === 'كسب عمل' || 
+            dtCat === 'labor income tax' || 
+            dtCat === 'labor_income_tax' || 
+            dtCat === 'payroll tax' || 
+            dtCat === 'payroll_tax' || 
+            dtCat === 'income tax' || 
+            dtCat === 'income_tax' || 
+            dtCat === t('ضريبة كسب العمل')
+          );
+
+        // Check eligibility
+        if (isSocialInsurance && (String(emp.subjectToSi) === 'No' || (emp.subjectToSi as any) === false)) {
+          return;
         }
-        compSi = siBase * (compPct / 100);
-      }
+        if (isIncomeTax && (String(emp.subjectToTax) === 'No' || (emp.subjectToTax as any) === false || String(emp.taxExempt) === 'Yes' || (emp.taxExempt as any) === true)) {
+          return;
+        }
 
-      // --- B. Taxes (ضريبة كسب العمل فقط) ---
-      let empTax = 0;
-      let compTax = 0;
-      
-      const taxType = deductionTypes.find(dtype => 
-        (dtype.category === 'ضريبة كسب العمل' || dtype.category === t('ضريبة كسب العمل') || dtype.category === 'كسب العمل') && 
-        dtype.status === 'Active'
-      );
-      if (emp.subjectToTax !== 'No' && emp.taxExempt !== 'Yes') {
-        // Simple Work Gain tax formulation (tax bracket or flat percentage)
-        const flatTaxPct = taxType ? (Number(taxType.percentage) || Number(taxType.employeePercentage) || 10) : 10;
-        empTax = grossBase * (flatTaxPct / 100);
-        compTax = taxType ? (grossBase * ((Number(taxType.companyPercentage) || 0) / 100)) : 0;
-      }
+        // Check active per employee
+        let isActiveForEmp = true;
+        if (emp.activeDeductions) {
+          try {
+            const activeArray = typeof emp.activeDeductions === 'string' ? JSON.parse(emp.activeDeductions) : emp.activeDeductions;
+            if (Array.isArray(activeArray) && activeArray.length > 0) {
+              isActiveForEmp = activeArray.includes(dt.id);
+            }
+          } catch (e) {}
+        }
+        if (!isActiveForEmp) return;
 
-      // --- C. Loans & Advances (سلف وقروض) ---
-      let empLoans = payrollTx ? (Number(payrollTx.loans) || 0) : 0;
-      let compLoans = 0;
+        // Base calculation method
+        let baseVal = 0;
+        const isFixed = dt.calculationMethod === t('مبلغ ثابت') || dt.calculationMethod === 'مبلغ ثابت' || dt.calculationMethod === 'Fixed' || dt.calculationMethod === 'fixed';
+        const isPercentage = dt.calculationMethod === t('نسبة مئوية') || dt.calculationMethod === 'نسبة مئوية' || dt.calculationMethod === 'Percentage' || dt.calculationMethod === 'percentage';
+        const isBrackets = dt.calculationMethod === t('شرائح') || dt.calculationMethod === 'شرائح' || dt.calculationMethod === 'Brackets' || dt.calculationMethod === 'brackets';
+        const isEquation = dt.calculationMethod === t('معادلة') || dt.calculationMethod === 'معادلة' || dt.calculationMethod === 'Equation' || dt.calculationMethod === 'equation';
 
-      // --- D. Other Deductions (الغياب، التأخيرات، الجزاءات، إلخ) ---
-      let empAbsence = payrollTx ? (Number(payrollTx.absenceDeduction) || 0) : 0;
-      let empDelay = payrollTx ? (Number(payrollTx.departureDelayDeduction) || 0) : 0;
-      let empPenalties = 0;
-      
-      // Look up penalties assigned to user for this month
-      const empMonthPenalties = penalties.filter(p => 
-        p.employeeId === emp.id && 
-        p.violationDate.startsWith(periodString) &&
-        p.status === 'Approved'
-      );
-      empPenalties = empMonthPenalties.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      
-      let empOtherGeneral = payrollTx ? (Number(payrollTx.otherDeductions) || 0) : 0;
-      
-      // Let's see if we have manual deduction transaction lines to override calculated values
+        const baseToUse = isSocialInsurance ? siBase : grossBase;
+
+        if (isFixed) {
+          baseVal = Number(dt.fixedAmount) || 0;
+        } else if (isPercentage) {
+          baseVal = baseToUse * ((Number(dt.percentage) || 0) / 100);
+        } else if (isBrackets) {
+          let bracketList: any[] = [];
+          try {
+            bracketList = typeof dt.brackets === 'string' ? JSON.parse(dt.brackets) : dt.brackets;
+          } catch (e) {}
+          if (!Array.isArray(bracketList)) bracketList = [];
+          const matchedBracket = bracketList.find((b: any) => baseToUse >= Number(b.from) && baseToUse <= Number(b.to));
+          if (matchedBracket) {
+            baseVal = baseToUse * ((Number(matchedBracket.percentage) || 0) / 100);
+          }
+        } else if (isEquation) {
+          let eqStr = (dt.equation || '').toLowerCase();
+          eqStr = eqStr.replace(/basic salary/g, String(basicSalary));
+          eqStr = eqStr.replace(/allowances/g, String(grossBase - basicSalary));
+          eqStr = eqStr.replace(/taxable income/g, String(grossBase));
+          const mathVal = safeEvaluateArithmetic(eqStr);
+          baseVal = Math.max(0, mathVal);
+        }
+
+        // Split between Employee & Company
+        let empShare = 0;
+        let compShare = 0;
+
+        const isEmployeeFull = dt.chargeType === t('يتحمله الموظف بالكامل') || dt.chargeType === 'يتحمله الموظف بالكامل' || dt.chargeType === 'Fully paid by employee' || dt.chargeType === 'Employee Full' || dt.chargeType === 'employee';
+        const isCompanyFull = dt.chargeType === t('تتحمله الشركة بالكامل') || dt.chargeType === t('تتمله الشركة بالكامل') || dt.chargeType === 'تتحمله الشركة بالكامل' || dt.chargeType === 'تتمله الشركة بالكامل' || dt.chargeType === 'Fully paid by company' || dt.chargeType === 'Company Full' || dt.chargeType === 'company';
+        const isShared = dt.chargeType === t('مشاركة بين الموظف والشركة') || dt.chargeType === t('مشاركة') || dt.chargeType === 'مشاركة بين الموظف والشركة' || dt.chargeType === 'مشاركة' || dt.chargeType === 'Shared' || dt.chargeType === 'shared';
+
+        if (isEmployeeFull) {
+          empShare = baseVal;
+          compShare = 0;
+        } else if (isCompanyFull) {
+          empShare = 0;
+          compShare = baseVal > 0 ? baseVal : (Number(dt.companyAmount) || 0);
+        } else if (isShared) {
+          if (dt.employeePercentage !== undefined && dt.companyPercentage !== undefined && (Number(dt.employeePercentage) > 0 || Number(dt.companyPercentage) > 0)) {
+            empShare = baseVal * ((Number(dt.employeePercentage) || 0) / 100);
+            compShare = baseVal * ((Number(dt.companyPercentage) || 0) / 100);
+          } else if (dt.employeeAmount || dt.companyAmount) {
+            empShare = Number(dt.employeeAmount) || 0;
+            compShare = Number(dt.companyAmount) || 0;
+          } else {
+            empShare = baseVal;
+            compShare = 0;
+          }
+        } else {
+          empShare = baseVal;
+          compShare = 0;
+        }
+
+        if (isSocialInsurance && compShare === 0 && Number(dt.companyPercentage) > 0) {
+          compShare = siBase * (Number(dt.companyPercentage) / 100);
+        }
+
+        if (isSocialInsurance) {
+          dynamicSiEmp += empShare;
+          dynamicSiComp += compShare;
+        } else if (isIncomeTax) {
+          dynamicTaxEmp += empShare;
+          dynamicTaxComp += compShare;
+        } else {
+          dynamicOtherEmp += empShare;
+          dynamicOtherComp += compShare;
+        }
+      });
+
+      // Look up penalties
+      const penaltiesDeduction = getApprovedPenaltiesSum(emp.id, periodString, allDbEmployees, activePenaltiesList);
+
+      // Look up loans / advances
+      const advancesDeduction = (financialAdvancesList || [])
+        .filter((a: any) => 
+          (a.employeeId === emp.id || a.employee_id === emp.id || a.employeeId === emp.employeeId) &&
+          (a.month === periodString || (a.disbursementDate && a.disbursementDate.startsWith(periodString))) &&
+          (a.status === 'Approved' || a.status === 'Paid' || a.status === 'معتمد' || a.status === 'مدفوع')
+        )
+        .reduce((sum: number, a: any) => sum + (Number(a.installmentAmount || a.amount) || 0), 0);
+
+      // Look up manual transaction lines if any
       const manualLines = deductionLines.filter(line => {
-        // Find if this line belongs to an approved transaction in target month and year
         const parentTx = deductionTransactions.find(t => t.id === line.transactionId);
         if (!parentTx) return false;
         return (
-          line.employeeId === emp.id &&
+          (line.employeeId === emp.id || line.employeeId === emp.employeeId) &&
           parentTx.month === targetMonth &&
           parentTx.year === targetYear &&
           parentTx.status === 'Approved'
         );
       });
 
-      // Override with manual transaction inputs per category
+      let manualSiEmp = 0;
+      let manualSiComp = 0;
+      let manualTaxEmp = 0;
+      let manualTaxComp = 0;
+      let manualLoanEmp = 0;
+      let manualLoanComp = 0;
+      let manualOtherEmp = 0;
+      let manualOtherComp = 0;
+
       manualLines.forEach(line => {
         const type = deductionTypes.find(t => t.id === line.deductionTypeId);
-        if (type) {
-          if (type.category === t('تأمينات')) {
-            empSi = Number(line.calculatedValue) || empSi;
-            compSi = Number(line.companyValue) || compSi;
-          } else if (type.category === 'ضريبة كسب العمل' || type.category === t('ضريبة كسب العمل') || type.category === 'كسب العمل') {
-            empTax = Number(line.calculatedValue) || empTax;
-            compTax = Number(line.companyValue) || compTax;
-          } else if (type.category === t('سلف وقروض')) {
-            empLoans = Number(line.calculatedValue) || empLoans;
-            compLoans = Number(line.companyValue) || compLoans;
-          } else {
-            empOtherGeneral += Number(line.calculatedValue) || 0;
-            compLoans += Number(line.companyValue) || 0; // Bear other
-          }
+        const typeCat = String(type?.category || '').toLowerCase().trim();
+        const isSi = typeCat === 'تأمينات' || typeCat === 'تأمينات اجتماعية' || typeCat === 'social insurance';
+        const isTax = !isSi && (typeCat === 'ضريبة كسب العمل' || typeCat === 'كسب العمل' || typeCat === 'labor income tax');
+        const isLoan = typeCat === 'سلف' || typeCat === 'سلف وقروض';
+
+        const lineEmpVal = Number(line.calculatedValue) || 0;
+        const lineCompVal = Number(line.companyValue) || 0;
+
+        if (isSi) {
+          manualSiEmp += lineEmpVal;
+          manualSiComp += lineCompVal;
+        } else if (isTax) {
+          manualTaxEmp += lineEmpVal;
+          manualTaxComp += lineCompVal;
+        } else if (isLoan) {
+          manualLoanEmp += lineEmpVal;
+          manualLoanComp += lineCompVal;
+        } else {
+          manualOtherEmp += lineEmpVal;
+          manualOtherComp += lineCompVal;
         }
       });
 
-      // Sum of other deductions category
-      const empOtherTotal = empAbsence + empDelay + empPenalties + empOtherGeneral;
+      // Construct verified figures
+      let socialShareEmp = 0;
+      let socialShareComp = manualSiComp || dynamicSiComp;
+      let taxShareEmp = 0;
+      let taxShareComp = manualTaxComp || dynamicTaxComp;
+      let loansShareEmp = 0;
+      let loansShareComp = manualLoanComp || 0;
+      let absenceDeduction = 0;
+      let unpaidLeaveDeduction = 0;
+      let delayDeduction = 0;
+      let otherProfileDeductions = 0;
+      let otherShareComp = manualOtherComp || dynamicOtherComp;
 
-      // Combined Totals
-      const totalBorneByEmployee = empSi + empTax + empLoans + empOtherTotal;
-      const totalBorneByCompany = compSi + compTax + compLoans;
-      const grandTotalFinancialImpact = totalBorneByEmployee + totalBorneByCompany;
+      if (payrollTx) {
+        // Exact 1-to-1 match with approved/processed payroll transaction
+        socialShareEmp = Number(payrollTx.socialInsurance) || 0;
+        taxShareEmp = Number(payrollTx.taxValue) || 0;
+        loansShareEmp = Number(payrollTx.loans) || 0;
+        absenceDeduction = Number(payrollTx.absenceDeduction) || 0;
+        unpaidLeaveDeduction = Number(payrollTx.unpaidLeaveDeduction) || 0;
+        delayDeduction = Number(payrollTx.departureDelayDeduction) || 0;
+
+        // In payrollTx, otherDeductions already equals (profileDeductions.otherDeductions + penalties)
+        // Extract profile portion cleanly to prevent double counting
+        const txOther = Number(payrollTx.otherDeductions) || 0;
+        otherProfileDeductions = Math.max(0, Number((txOther - penaltiesDeduction).toFixed(2)));
+      } else {
+        // Fallback for draft/future months without recorded transactions
+        socialShareEmp = manualSiEmp || dynamicSiEmp;
+        taxShareEmp = manualTaxEmp || dynamicTaxEmp;
+        loansShareEmp = manualLoanEmp || advancesDeduction;
+        otherProfileDeductions = manualOtherEmp || dynamicOtherEmp;
+      }
+
+      // Sum of other / behavioral / penal deductions
+      const otherDeductionsTotal = Number((absenceDeduction + unpaidLeaveDeduction + delayDeduction + penaltiesDeduction + otherProfileDeductions).toFixed(2));
+
+      // Total Employee Deductions (Reconciled with Payroll)
+      const totalBorneByEmployee = Number((socialShareEmp + taxShareEmp + loansShareEmp + otherDeductionsTotal).toFixed(2));
+
+      // Total Company Bearings
+      const totalBorneByCompany = Number((socialShareComp + taxShareComp + loansShareComp + otherShareComp).toFixed(2));
+
+      // Combined Burden
+      const grandTotalFinancialImpact = Number((totalBorneByEmployee + totalBorneByCompany).toFixed(2));
 
       return {
         id: emp.id,
@@ -306,23 +508,25 @@ export const DeductionTransactions: React.FC = () => {
         deptId: emp.departmentId,
         deptName: dept?.name || (isRtl ? t('عام / غير محدد') : 'General / Not Specified'),
         basicSalary,
-        socialShareEmp: empSi,
-        socialShareComp: compSi,
-        taxShareEmp: empTax,
-        taxShareComp: compTax,
-        loansShareEmp: empLoans,
-        loansShareComp: compLoans,
-        absenceDeduction: empAbsence,
-        delayDeduction: empDelay,
-        penaltiesDeduction: empPenalties,
-        otherDeductionsGeneral: empOtherGeneral,
-        otherDeductionsTotal: empOtherTotal,
+        socialShareEmp,
+        socialShareComp,
+        taxShareEmp,
+        taxShareComp,
+        loansShareEmp,
+        loansShareComp,
+        absenceDeduction,
+        unpaidLeaveDeduction,
+        delayDeduction,
+        penaltiesDeduction,
+        otherProfileDeductions,
+        otherShareComp,
+        otherDeductionsTotal,
         totalDeduction: totalBorneByEmployee,
         totalCompany: totalBorneByCompany,
         grandTotal: grandTotalFinancialImpact
       };
     })
-    // 4. Search Filter
+    // 3. Search Filter
     .filter(row => {
       if (!searchQuery) return true;
       const s = searchQuery.toLowerCase();
@@ -391,12 +595,12 @@ export const DeductionTransactions: React.FC = () => {
         affectedEmployeesCount
       }
     };
-  }, [allDbEmployees, dbDepartments, payrollTransactions, deductionTypes, deductionLines, deductionTransactions, penalties, targetYear, targetMonth, selectedDept, searchQuery, sortField, sortOrder, isRtl]);
+  }, [allDbEmployees, dbDepartments, payrollTransactions, deductionTypes, deductionLines, deductionTransactions, penalties, dbPenalties, financialAdvancesList, targetYear, targetMonth, selectedDept, searchQuery, sortField, sortOrder, isRtl]);
 
   const handleExportCSV = () => {
     const csvHeaders = isRtl 
-      ? [t('الكود الوظيفي'), t('اسم الموظف'), t('الإدارة'), t('تأمينات موظف'), t('تأمينات شركة'), t('ضرائب كسب العمل'), t('ضرائب شركة'), t('السلف والقروض'), t('خصومات الغياب والتأخر والجزاءات'), t('إجمالي استقطاع الموظف'), t('إجمالي تحمل الشركة'), t('العبء المالي المدمج')]
-      : ['Employee Code', 'Name', 'Department', 'SI Employee Share', 'SI Company Bear', 'Tax Employee Share', 'Tax Company Bear', 'Loans Deduction', 'Absence/Delay/Penalties', 'Total Employee Borne', 'Total Company Bear', 'Combined Impact'];
+      ? [t('الكود الوظيفي'), t('اسم الموظف'), t('الإدارة'), t('تأمينات موظف'), t('تأمينات شركة'), t('ضرائب كسب العمل'), t('ضرائب شركة'), t('السلف والقروض'), t('خصومات الغياب والتأخر والجزاءات وأخرى'), t('إجمالي استقطاع الموظف'), t('إجمالي تحمل الشركة'), t('العبء المالي المدمج')]
+      : ['Employee Code', 'Name', 'Department', 'SI Employee Share', 'SI Company Bear', 'Tax Employee Share', 'Tax Company Bear', 'Loans Deduction', 'Absence/Delay/Penalties/Other', 'Total Employee Borne', 'Total Company Bear', 'Combined Impact'];
 
     const csvRows = reportData.rows.map(r => [
       r.empCode,
@@ -570,7 +774,7 @@ export const DeductionTransactions: React.FC = () => {
         </div>
       )}
 
-      {/* 4 Beautiful Metrics summary cards (Bento Style in EGP) */}
+      {/* 4 Metrics summary cards (Bento Style in EGP) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         
         {/* Employee Deductions card */}
@@ -609,7 +813,7 @@ export const DeductionTransactions: React.FC = () => {
               {formatCurrency(reportData.sums.sumTotalComp)}
             </h2>
             <p className="text-[10px] mt-2 text-muted-foreground font-bold">
-              {isRtl ? t('تأمينات وضرائب مدعومة ومتحملة من المرفق') : 'Subsidized SI and organizational liabilities'}
+              {isRtl ? t('تأمينات وضرائب مدعومة ومتحملة من المنشأة') : 'Subsidized SI and organizational liabilities'}
             </p>
           </div>
         </div>
@@ -794,10 +998,10 @@ export const DeductionTransactions: React.FC = () => {
                   </span>
                 </div>
                 <div className="text-center last:border-0">
-                  <span className="block text-[8px] text-muted-foreground font-black mb-1">{isRtl ? t('اقتطاعات أخرى') : 'Other General'}</span>
+                  <span className="block text-[8px] text-muted-foreground font-black mb-1">{isRtl ? t('إجازات غير مدفوعة وأخرى') : 'Unpaid Leave & Other'}</span>
                   <span className="text-xs font-black text-foreground block truncate">
-                    {reportData.rows.reduce((s, r) => s + r.otherDeductionsGeneral, 0) > 0 
-                      ? formatCurrency(reportData.rows.reduce((s, r) => s + r.otherDeductionsGeneral, 0)) 
+                    {reportData.rows.reduce((s, r) => s + (r.unpaidLeaveDeduction + r.otherProfileDeductions), 0) > 0 
+                      ? formatCurrency(reportData.rows.reduce((s, r) => s + (r.unpaidLeaveDeduction + r.otherProfileDeductions), 0)) 
                       : '—'}
                   </span>
                 </div>
@@ -850,10 +1054,10 @@ export const DeductionTransactions: React.FC = () => {
                 <th className="p-4 text-right print:p-2">{isRtl ? t('الموظف / الإدارة') : 'Employee / Dept'}</th>
                 <th className="p-4 text-center print:p-2 bg-blue-50/50 dark:bg-blue-950/20">{isRtl ? t('تأمينات موظف') : 'SI Emp'}</th>
                 <th className="p-4 text-center print:p-2 bg-blue-50/50 dark:bg-blue-950/20">{isRtl ? t('تحمل تأمينات شركة') : 'SI Company'}</th>
-                <th className="p-4 text-center print:p-2 bg-rose-50/50 dark:bg-rose-950/20">{isRtl ? t('ضرائب موظف') : 'Tax Emp'}</th>
+                <th className="p-4 text-center print:p-2 bg-rose-50/50 dark:bg-rose-950/20">{isRtl ? t('ضرائب كسب عمل') : 'Tax Emp'}</th>
                 <th className="p-4 text-center print:p-2 bg-rose-50/50 dark:bg-rose-950/20">{isRtl ? t('تحمل ضرائب شركة') : 'Tax Company'}</th>
                 <th className="p-4 text-center print:p-2 bg-amber-50/50 dark:bg-amber-950/20">{isRtl ? t('سلف وقروض') : 'Loans'}</th>
-                <th className="p-4 text-center print:p-2 bg-violet-50/50 dark:bg-violet-950/20">{isRtl ? t('خصومات جزائية وأخرى') : 'Other Deductions'}</th>
+                <th className="p-4 text-center print:p-2 bg-violet-50/50 dark:bg-violet-950/20">{isRtl ? t('خصومات غياب وجزاءات وأخرى') : 'Other Deductions'}</th>
                 <th className="p-4 text-center print:p-2 font-black text-orange-600 bg-orange-50/20">{isRtl ? t('إجمالي مستقطع') : 'Total Employee Borne'}</th>
                 <th className="p-4 text-center print:p-2 font-black text-emerald-600 bg-emerald-50/20">{isRtl ? t('إجمالي الشركة') : 'Total Company Bear'}</th>
                 <th className="p-4 text-center print:p-2 font-black text-purple-600 bg-purple-50/20">{isRtl ? t('صافي العبء') : 'Combined Burden'}</th>
@@ -867,7 +1071,7 @@ export const DeductionTransactions: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                reportData.rows.map((row, index) => (
+                reportData.rows.map((row) => (
                   <tr 
                     key={row.id} 
                     className="hover:bg-muted/30 transition-all font-bold group"
@@ -942,11 +1146,15 @@ export const DeductionTransactions: React.FC = () => {
                         <div className="flex flex-col items-center gap-0.5">
                           <span className="text-foreground font-bold">{formatCurrency(row.otherDeductionsTotal)}</span>
                           {/* Inner detailed tooltip showing what other contains */}
-                          {(row.absenceDeduction > 0 || row.delayDeduction > 0 || row.penaltiesDeduction > 0) && (
+                          {(row.absenceDeduction > 0 || row.unpaidLeaveDeduction > 0 || row.delayDeduction > 0 || row.penaltiesDeduction > 0 || row.otherProfileDeductions > 0) && (
                             <span className="text-[8px] text-muted-foreground leading-none font-bold">
-                              ({row.absenceDeduction > 0 && `${isRtl ? t('غياب') : 'Abs'}`} 
-                              {row.delayDeduction > 0 && ` + ${isRtl ? t('تأخير') : 'Delay'}`} 
-                              {row.penaltiesDeduction > 0 && ` + ${isRtl ? t('جزاء') : 'Pen'}`})
+                              {[
+                                row.absenceDeduction > 0 && `${isRtl ? t('غياب') : 'Abs'}: ${row.absenceDeduction}`,
+                                row.delayDeduction > 0 && `${isRtl ? t('تأخير') : 'Delay'}: ${row.delayDeduction}`,
+                                row.penaltiesDeduction > 0 && `${isRtl ? t('جزاءات') : 'Pen'}: ${row.penaltiesDeduction}`,
+                                row.unpaidLeaveDeduction > 0 && `${isRtl ? t('إجازة بدون راتب') : 'Unpaid'}: ${row.unpaidLeaveDeduction}`,
+                                row.otherProfileDeductions > 0 && `${isRtl ? t('أخرى') : 'Other'}: ${row.otherProfileDeductions}`
+                              ].filter(Boolean).join(' • ')}
                             </span>
                           )}
                         </div>
@@ -973,7 +1181,7 @@ export const DeductionTransactions: React.FC = () => {
                       )}
                     </td>
 
-                    {/* Net Combative Burden */}
+                    {/* Net Combined Burden */}
                     <td className="p-4 text-center print:p-2 font-black text-purple-600 bg-purple-50/10 dark:bg-purple-950/5">
                       {row.grandTotal > 0 ? (
                         formatCurrency(row.grandTotal)
@@ -1029,3 +1237,4 @@ export const DeductionTransactions: React.FC = () => {
     </div>
   );
 };
+

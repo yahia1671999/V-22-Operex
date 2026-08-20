@@ -38,13 +38,13 @@ import {
   HelpCircle,
   Receipt
 } from 'lucide-react';
-import { CalculationBreakdownModal } from '../payroll/CalculationBreakdownModal';
 import { MonthlyAttendanceDetailsModal } from '../attendance/MonthlyAttendanceDetailsModal';
 import { db, collection, setDoc, doc, deleteDoc, serverTimestamp, OperationType, handleApiError, writeBatch } from '../../api';
 import { useData } from '../../contexts/DataContext';
 import { Employee, Transaction } from '../../types';
 import { formatCurrency, cn } from '../../lib/utils';
 import { calculatePayrollDetails } from '../../lib/payrollUtils';
+import { calculateEmployeeMonthlyAttendance } from '../../utils/monthlyAttendanceCalculation';
 import { safeEvaluateArithmetic } from '../../utils/safeMath';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -77,10 +77,6 @@ export const Transactions: React.FC = () => {
   const [financialAdvancesList, setFinancialAdvancesList] = useState<any[]>([]);
   const [activeProfileDeductionDetails, setActiveProfileDeductionDetails] = useState<any[]>([]);
   const [showDeductionsBreakdown, setShowDeductionsBreakdown] = useState(false);
-  const [breakdownTarget, setBreakdownTarget] = useState<{
-    employee: Employee;
-    transaction: Partial<Transaction>;
-  } | null>(null);
   const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
   const [attendanceModalEmployee, setAttendanceModalEmployee] = useState<Employee | null>(null);
   const [attendanceModalMonth, setAttendanceModalMonth] = useState<string>(selectedMonth);
@@ -1959,15 +1955,6 @@ export const Transactions: React.FC = () => {
                               <FileText className="w-4 h-4" />
                             </button>
 
-                            {/* Detailed Calculation Breakdown Button */}
-                            <button 
-                              onClick={() => setBreakdownTarget({ employee: emp, transaction })}
-                              className="p-2.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 rounded-xl border border-indigo-100 dark:border-indigo-900/30 transition-all hover:scale-[1.05] duration-150"
-                              title={t('تفاصيل وطريقة احتساب المبالغ (المعادلات والمصادر)')}
-                            >
-                              <Calculator className="w-4 h-4" />
-                            </button>
-
                             {/* Quick Sync Button for Employee */}
                             <button 
                               onClick={() => handleSyncApproved(emp.id)}
@@ -2137,15 +2124,6 @@ export const Transactions: React.FC = () => {
                             <Eye className="w-4 h-4" />
                           </button>
                           <button 
-                            onClick={() => {
-                              if (emp) setBreakdownTarget({ employee: emp, transaction: tx });
-                            }}
-                            className="p-2.5 text-indigo-600 dark:text-indigo-400 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-all shadow-sm"
-                            title={t('تفاصيل وطريقة احتساب المبالغ (المعادلات والمصادر)')}
-                          >
-                            <Calculator className="w-4 h-4" />
-                          </button>
-                          <button 
                             onClick={() => handleEdit(tx)}
                             className="p-2.5 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-all shadow-sm"
                             title={t('تعديل')}
@@ -2206,21 +2184,6 @@ export const Transactions: React.FC = () => {
                   >
                     <Fingerprint className="w-4 h-4" />
                     <span>{t('تفاصيل الحضور الشهري')}</span>
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (selectedPayCard) {
-                        const emp = employees.find(e => e.id === selectedPayCard.employeeId);
-                        if (emp) {
-                          setBreakdownTarget({ employee: emp, transaction: selectedPayCard });
-                        }
-                      }
-                    }}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/30 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 font-black rounded-xl transition-all border border-indigo-200 dark:border-indigo-800/40 text-xs"
-                    title={t('عرض تفاصيل ومصادر ومعادلات احتساب كل مبلغ')}
-                  >
-                    <Calculator className="w-4 h-4" />
-                    <span>{t('طريقة احتساب المبالغ')}</span>
                   </button>
                   <button 
                     onClick={() => {
@@ -2301,50 +2264,29 @@ export const Transactions: React.FC = () => {
 
                   {/* Monthly Allocation of Days */}
                   {(() => {
-                    const empId = selectedPayCard.employeeId;
+                    const emp = employees.find(e => e.id === selectedPayCard.employeeId);
                     const targetMonth = selectedPayCard.month;
 
-                    // 1. Attendance Days (عدد أيام الحضور)
-                    const empAttendanceRecords = attendanceRecords.filter(rec => 
-                      rec.employeeId === empId && 
-                      rec.timestamp && 
-                      rec.timestamp.startsWith(targetMonth)
-                    );
-                    const attendanceDaysSet = new Set(empAttendanceRecords.map(rec => rec.timestamp.substring(0, 10)));
-                    const attendanceDaysCount = attendanceDaysSet.size;
+                    if (!emp) return null;
 
-                    // 2. Missions Days (عدد أيام المأموريات)
-                    const empMissions = missions.filter(m => 
-                      m.employeeId === empId && 
-                      m.status === 'Approved' && 
-                      (m.startDate?.startsWith(targetMonth) || m.endDate?.startsWith(targetMonth))
-                    );
-                    let missionsDaysCount = 0;
-                    empMissions.forEach(m => {
-                      const days = Math.max(1, Math.round((new Date(m.endDate).getTime() - new Date(m.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1);
-                      missionsDaysCount += days;
+                    const { stats } = calculateEmployeeMonthlyAttendance({
+                      employee: emp,
+                      month: targetMonth,
+                      attendanceRecords,
+                      attendanceShifts,
+                      missions,
+                      leaveRequests,
+                      absenceRecords,
+                      absenceTypes,
+                      administrativeNotices,
+                      language
                     });
 
-                    // 3. Work from Home (العمل من المنزل) & 5. Leaves Days (الاجازات)
-                    const empLeaves = leaveRequests.filter(r => 
-                      r.employeeId === empId && 
-                      r.status === 'Approved' && 
-                      (r.startDate?.startsWith(targetMonth) || r.endDate?.startsWith(targetMonth))
-                    );
-
-                    let wfhDaysCount = 0;
-                    let leavesDaysCount = 0;
-
-                    empLeaves.forEach(r => {
-                      const days = Math.max(1, Math.round((new Date(r.endDate).getTime() - new Date(r.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1);
-                      if (r.type === 'WorkFromHome') {
-                        wfhDaysCount += days;
-                      } else {
-                        leavesDaysCount += days;
-                      }
-                    });
-
-                    const absenceDaysCount = selectedPayCard.absenceDays || 0;
+                    const attendanceDaysCount = stats.presentCount;
+                    const missionsDaysCount = stats.missionCount;
+                    const wfhDaysCount = stats.wfhCount;
+                    const absenceDaysCount = selectedPayCard.absenceDays !== undefined ? selectedPayCard.absenceDays : stats.absentCount;
+                    const leavesDaysCount = stats.leaveCount;
 
                     return (
                       <div className="border-2 border-slate-150/80 dark:border-slate-850/80 rounded-[2rem] overflow-hidden bg-[#fafbfc] dark:bg-[#0b101f] p-6 space-y-4 shadow-sm">
@@ -2674,22 +2616,6 @@ export const Transactions: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {formData.employeeId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const emp = employees.find(e => e.id === formData.employeeId);
-                        if (emp) {
-                          setBreakdownTarget({ employee: emp, transaction: formData });
-                        }
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 font-bold text-xs rounded-xl border border-indigo-200 dark:border-indigo-800/40 transition-all shadow-sm"
-                      title={t('عرض تفاصيل ومصادر ومعادلات احتساب كل مبلغ لهذا الموظف')}
-                    >
-                      <Calculator className="w-4 h-4" />
-                      <span>{t('طريقة احتساب المبالغ')}</span>
-                    </button>
-                  )}
                   <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-colors"><X className="w-6 h-6 text-slate-400" /></button>
                 </div>
               </div>
@@ -3267,41 +3193,6 @@ export const Transactions: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
-
-      {/* Calculation Provenance & Breakdown Modal */}
-      {breakdownTarget && (
-        <CalculationBreakdownModal
-          isOpen={!!breakdownTarget}
-          onClose={() => setBreakdownTarget(null)}
-          employee={breakdownTarget.employee}
-          transaction={breakdownTarget.transaction}
-          month={selectedMonth}
-          systemSettings={systemSettings}
-          onViewAttendanceDetails={() => {
-            if (breakdownTarget.employee) {
-              handleOpenAttendanceDetails(breakdownTarget.employee, selectedMonth);
-            }
-          }}
-          extraContext={{
-            penaltiesList: (penalties || []).filter(p => 
-              p.employeeId === breakdownTarget.employee.id && 
-              p.status === 'Approved' && 
-              (p.targetMonth === selectedMonth || (p.penaltyDate && p.penaltyDate.startsWith(selectedMonth)))
-            ),
-            missionsList: (missions || []).filter(m => 
-              m.employeeId === breakdownTarget.employee.id && 
-              m.status === 'Approved' && 
-              (m.startDate?.startsWith(selectedMonth) || m.endDate?.startsWith(selectedMonth))
-            ),
-            leavesList: (leaveRequests || []).filter(l => 
-              l.employeeId === breakdownTarget.employee.id && 
-              l.status === 'Approved' && 
-              (l.startDate?.startsWith(selectedMonth) || l.endDate?.startsWith(selectedMonth))
-            ),
-            deductionTypesList: deductionTypes
-          }}
-        />
-      )}
 
       {/* Monthly Attendance Details Modal */}
       <MonthlyAttendanceDetailsModal

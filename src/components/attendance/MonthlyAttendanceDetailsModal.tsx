@@ -34,6 +34,7 @@ import {
 import { format, parseISO } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { useLanguage } from '../../contexts/LanguageContext';
+import { useData } from '../../contexts/DataContext';
 import { cn } from '../../lib/utils';
 import {
   MonthlyDayAttendanceDetail,
@@ -70,10 +71,31 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
   administrativeNotices = []
 }) => {
   const { t, language } = useLanguage();
+  const { systemSettings, adminDepartments } = useData();
   const isRtl = language === 'ar';
 
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  const orgName = systemSettings?.organizationName || (isRtl ? 'شركة الأفق الرقمي للتجارة والتقنية' : 'Paradise Solutions');
+  const logoUrl = systemSettings?.logoUrl || '';
+  const departmentName = employee 
+    ? (adminDepartments.find(d => d.id === employee.departmentId)?.name || (isRtl ? 'الإدارة العامة' : 'General Admin'))
+    : '';
+
+  const [yearStr, monthNumStr] = (month || '').split('-');
+  const monthNamesAr = [
+    'يناير (01)', 'فبراير (02)', 'مارس (03)', 'أبريل (04)', 'مايو (05)', 'يونيو (06)',
+    'يوليو (07)', 'أغسطس (08)', 'سبتمبر (09)', 'أكتوبر (10)', 'نوفمبر (11)', 'ديسمبر (12)'
+  ];
+  const monthNamesEn = [
+    'January (01)', 'February (02)', 'March (03)', 'April (04)', 'May (05)', 'June (06)',
+    'July (07)', 'August (08)', 'September (09)', 'October (10)', 'November (11)', 'December (12)'
+  ];
+  const monthIndex = parseInt(monthNumStr, 10) - 1;
+  const monthDisplayName = (!isNaN(monthIndex) && (isRtl ? monthNamesAr[monthIndex] : monthNamesEn[monthIndex]))
+    ? (isRtl ? monthNamesAr[monthIndex] : monthNamesEn[monthIndex])
+    : month;
 
   // Extract shift
   const shift = useMemo(() => {
@@ -217,10 +239,11 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
   if (!isOpen || !employee) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-950/70 backdrop-blur-md overflow-y-auto print:p-0 print:bg-white">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-950/70 backdrop-blur-md overflow-y-auto print:p-0 print:m-0 print:bg-white print:static print:overflow-visible">
+      {/* Screen Interactive Modal */}
       <div 
         id="monthly-attendance-details-modal"
-        className="relative w-full max-w-7xl bg-card text-foreground rounded-2xl shadow-2xl border border-border overflow-hidden flex flex-col max-h-[92vh] print:max-h-none print:shadow-none print:border-none print:rounded-none"
+        className="relative w-full max-w-7xl bg-card text-foreground rounded-2xl shadow-2xl border border-border overflow-hidden flex flex-col max-h-[92vh] print:hidden"
       >
         {/* Modal Header */}
         <div className="px-6 py-5 bg-muted/40 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -263,11 +286,11 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-end md:self-auto print:hidden">
+          <div className="flex items-center gap-2 self-end md:self-auto">
             <button
               type="button"
               onClick={handleExportCSV}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-750 transition-all shadow-sm active:scale-95"
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-750 transition-all shadow-sm active:scale-95 cursor-pointer"
               title={t('تصدير إكسيل')}
             >
               <Download className="w-4 h-4 text-emerald-600" />
@@ -276,16 +299,16 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
             <button
               type="button"
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-750 transition-all shadow-sm active:scale-95"
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black text-white bg-slate-900 hover:bg-slate-800 dark:bg-primary dark:hover:bg-primary/90 border border-slate-900 dark:border-primary rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
               title={t('طباعة التقرير')}
             >
-              <Printer className="w-4 h-4 text-primary" />
-              <span>{t('طباعة')}</span>
+              <Printer className="w-4 h-4 text-emerald-400 dark:text-white" />
+              <span>{t('طباعة التقرير')}</span>
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-all"
+              className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-all cursor-pointer"
               title={t('إغلاق')}
             >
               <X className="w-5 h-5" />
@@ -330,13 +353,13 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
         </div>
 
         {/* Toolbar & Filters */}
-        <div className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 print:hidden">
+        <div className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
             <button
               type="button"
               onClick={() => setFilterStatus('all')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'all' 
                   ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -348,7 +371,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               type="button"
               onClick={() => setFilterStatus('present')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'present' 
                   ? "bg-emerald-600 text-white shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
@@ -360,7 +383,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               type="button"
               onClick={() => setFilterStatus('late')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'late' 
                   ? "bg-destructive text-white shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-950/30"
@@ -372,7 +395,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               type="button"
               onClick={() => setFilterStatus('overtime')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'overtime' 
                   ? "bg-blue-600 text-white shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-blue-50 dark:hover:bg-blue-950/30"
@@ -384,7 +407,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               type="button"
               onClick={() => setFilterStatus('mission')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'mission' 
                   ? "bg-purple-600 text-white shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-purple-50 dark:hover:bg-purple-950/30"
@@ -396,7 +419,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               type="button"
               onClick={() => setFilterStatus('leave')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'leave' 
                   ? "bg-amber-600 text-white shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
@@ -408,7 +431,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               type="button"
               onClick={() => setFilterStatus('wfh')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'wfh' 
                   ? "bg-indigo-600 text-white shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30"
@@ -420,7 +443,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               type="button"
               onClick={() => setFilterStatus('absent')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'absent' 
                   ? "bg-red-700 text-white shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-950/30"
@@ -432,7 +455,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               type="button"
               onClick={() => setFilterStatus('holidays')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-black transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
                 filterStatus === 'holidays' 
                   ? "bg-slate-700 text-white shadow-sm" 
                   : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -689,10 +712,372 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
           <button
             type="button"
             onClick={onClose}
-            className="px-6 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl transition-all font-black text-xs"
+            className="px-6 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl transition-all font-black text-xs cursor-pointer"
           >
             {t('إغلاق')}
           </button>
+        </div>
+      </div>
+
+      {/* =========================================================================
+          OFFICIAL PRINTABLE A4 PORTRAIT DOCUMENT (Shown strictly when printing)
+          ========================================================================= */}
+      <div 
+        id="monthly-attendance-printable-document"
+        className="hidden print:block print:w-full bg-white text-slate-900 p-0 m-0 font-sans"
+        dir={isRtl ? 'rtl' : 'ltr'}
+      >
+        {/* Print Stylesheet overrides for strict A4 portrait fit */}
+        <style dangerouslySetInnerHTML={{ __html: `
+          @media print {
+            @page {
+              size: A4 portrait;
+              margin: 8mm 6mm 8mm 6mm;
+            }
+            body, html {
+              background: #ffffff !important;
+              color: #0f172a !important;
+              font-family: 'Cairo', 'Inter', system-ui, sans-serif !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .no-print, nav, header, aside, .modal-backdrop {
+              display: none !important;
+            }
+            #monthly-attendance-printable-document {
+              display: block !important;
+              width: 100% !important;
+              max-width: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            table {
+              width: 100% !important;
+              border-collapse: collapse !important;
+              page-break-inside: auto;
+            }
+            tr {
+              page-break-inside: avoid;
+              page-break-after: auto;
+            }
+            thead {
+              display: table-header-group;
+            }
+            tfoot {
+              display: table-footer-group;
+            }
+            th, td {
+              border: 1px solid #cbd5e1 !important;
+            }
+          }
+        `}} />
+
+        <div className="space-y-3">
+          {/* Top Decorative Border Strip */}
+          <div className="h-1.5 bg-slate-900 w-full" />
+
+          {/* 1. Header: Top Right (Organization Name) | Center (Title) | Top Left (Logo) */}
+          <div className="flex justify-between items-center pb-3 border-b-2 border-slate-900 gap-2">
+            {/* Top Right: اسم المنشأة */}
+            <div className="w-[30%] text-right space-y-0.5">
+              <h1 className="text-sm font-black text-slate-900 leading-tight">
+                {orgName}
+              </h1>
+              <p className="text-[8px] text-slate-500 font-bold uppercase tracking-wider">
+                {isRtl ? 'إدارة الموارد البشرية والشؤون الإدارية' : 'Human Resources & Admin Dept'}
+              </p>
+              <p className="text-[7.5px] text-slate-400 font-mono">
+                DOC: ATT-{(month || '').replace('-', '')}-{employee.employeeId || employee.id}
+              </p>
+            </div>
+
+            {/* In the Center: عنوان تقرير الحضور الشهري */}
+            <div className="w-[40%] text-center space-y-0.5">
+              <div className="inline-block bg-slate-900 text-white px-3.5 py-1 rounded-none">
+                <h2 className="text-xs font-black tracking-wide">
+                  {isRtl ? 'تقرير الحضور والانصراف الشهري' : 'Monthly Attendance & Departure Report'}
+                </h2>
+              </div>
+              <p className="text-[8.5px] font-black text-slate-700 tracking-tight">
+                {isRtl ? `عن شهر: ${monthDisplayName} ${yearStr}م` : `Period: ${monthDisplayName} ${yearStr}`}
+              </p>
+            </div>
+
+            {/* Top Left: شعار المنشأة */}
+            <div className="w-[30%] flex justify-end items-center">
+              {logoUrl ? (
+                <img 
+                  src={logoUrl} 
+                  alt="Logo" 
+                  className="h-10 max-h-11 w-auto max-w-[130px] object-contain bg-transparent" 
+                  referrerPolicy="no-referrer" 
+                  crossOrigin="anonymous" 
+                />
+              ) : (
+                <div className="h-10 px-3 border border-slate-300 flex items-center justify-center gap-1.5 text-slate-800 bg-slate-50">
+                  <Building2 className="w-4 h-4 text-slate-700" />
+                  <span className="text-[8.5px] font-black">{orgName}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 2. Below the Title: Employee & Report Metadata Strip */}
+          <div className="border border-slate-900 bg-slate-50/70 p-2 text-[9px] font-bold text-slate-800">
+            <div className="grid grid-cols-5 gap-2">
+              <div className="border-l border-slate-200 pl-2">
+                <span className="text-[7.5px] text-slate-500 font-bold block">{isRtl ? 'اسم الموظف / Employee' : 'Employee Name'}</span>
+                <span className="text-[9.5px] font-black text-slate-900 block truncate">{employee.name}</span>
+              </div>
+              <div className="border-l border-slate-200 pl-2">
+                <span className="text-[7.5px] text-slate-500 font-bold block">{isRtl ? 'كود الموظف / Code' : 'Employee Code'}</span>
+                <span className="text-[9.5px] font-black text-slate-900 block font-mono">#{employee.employeeId || employee.id}</span>
+              </div>
+              <div className="border-l border-slate-200 pl-2">
+                <span className="text-[7.5px] text-slate-500 font-bold block">{isRtl ? 'القسم / Department' : 'Department'}</span>
+                <span className="text-[9.5px] font-black text-slate-900 block truncate">{departmentName}</span>
+              </div>
+              <div className="border-l border-slate-200 pl-2">
+                <span className="text-[7.5px] text-slate-500 font-bold block">{isRtl ? 'الشهر / Month' : 'Month'}</span>
+                <span className="text-[9.5px] font-black text-slate-900 block">{monthDisplayName}</span>
+              </div>
+              <div>
+                <span className="text-[7.5px] text-slate-500 font-bold block">{isRtl ? 'السنة / Year' : 'Year'}</span>
+                <span className="text-[9.5px] font-black text-slate-900 block font-mono">{yearStr}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2 mt-1.5 pt-1.5 border-t border-slate-200 text-[8px]">
+              <div>
+                <span className="text-slate-500">{isRtl ? 'المسمى الوظيفي: ' : 'Job Title: '}</span>
+                <span className="font-black text-slate-800">{employee.jobTitle || '—'}</span>
+              </div>
+              <div>
+                <span className="text-slate-500">{isRtl ? 'الوردية المقررة: ' : 'Shift: '}</span>
+                <span className="font-black text-slate-800">{shift ? `${shift.name} (${shift.startTime}-${shift.endTime})` : '—'}</span>
+              </div>
+              <div>
+                <span className="text-slate-500">{isRtl ? 'نظام العمل: ' : 'Work Mode: '}</span>
+                <span className="font-black text-slate-800">{employee.workMode === 'Remotely Work' ? (isRtl ? 'عن بُعد' : 'Remote') : (isRtl ? 'حضوري' : 'On-site')}</span>
+              </div>
+              <div className="text-left">
+                <span className="text-slate-500">{isRtl ? 'تاريخ التوليد: ' : 'Generated: '}</span>
+                <span className="font-bold font-mono text-slate-700">{format(new Date(), 'yyyy-MM-dd HH:mm')}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Organized Monthly Table for ALL Days of the Month */}
+          <div className="overflow-hidden border border-slate-900">
+            <table className="w-full text-right border-collapse text-[8px] leading-tight">
+              <thead>
+                <tr className="bg-slate-900 text-white font-black text-[8px] uppercase">
+                  <th className="p-1 border border-slate-700 text-center w-[10%]">{isRtl ? 'التاريخ' : 'Date'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[8%]">{isRtl ? 'اليوم' : 'Day'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[8%]">{isRtl ? 'الحضور' : 'In'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[8%]">{isRtl ? 'الانصراف' : 'Out'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[7%]">{isRtl ? 'التأخير' : 'Delay'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[7%]">{isRtl ? 'الإضافي' : 'Overtime'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[10%]">{isRtl ? 'حالة اليوم' : 'Status'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[9%]">{isRtl ? 'الإجازة' : 'Leave'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[10%]">{isRtl ? 'المأمورية' : 'Mission'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[7%]">{isRtl ? 'عن بُعد' : 'WFH'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[9%]">{isRtl ? 'العطلة الرسمية' : 'Holiday'}</th>
+                  <th className="p-1 border border-slate-700 text-center w-[7%]">{isRtl ? 'الملاحظات' : 'Notes'}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-300 font-bold text-slate-800">
+                {monthlyDays.map((d, idx) => {
+                  const isWeekendOrHoliday = d.statusKey === 'weekend' || d.statusKey === 'holiday';
+                  const isAbsent = d.statusKey === 'absent';
+                  const isLate = d.delayMinutes > 0;
+                  const isOvertime = d.overtimeMinutes > 0;
+
+                  return (
+                    <tr 
+                      key={d.dateStr} 
+                      className={cn(
+                        idx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white',
+                        isWeekendOrHoliday && 'bg-slate-100/80 text-slate-600',
+                        isAbsent && 'bg-red-50/40 text-red-900 font-black'
+                      )}
+                    >
+                      {/* التاريخ */}
+                      <td className="p-1 border border-slate-300 text-center font-mono font-bold">
+                        {d.dateStr}
+                      </td>
+
+                      {/* اليوم */}
+                      <td className="p-1 border border-slate-300 text-center font-black">
+                        {d.dayName}
+                      </td>
+
+                      {/* الحضور */}
+                      <td className="p-1 border border-slate-300 text-center font-mono">
+                        {d.firstIn ? (
+                          <span className="text-emerald-700 font-black">
+                            {d.inTimeStr}
+                          </span>
+                        ) : '—'}
+                      </td>
+
+                      {/* الانصراف */}
+                      <td className="p-1 border border-slate-300 text-center font-mono">
+                        {d.lastOut ? (
+                          <span className="text-slate-800 font-black">
+                            {d.outTimeStr}
+                          </span>
+                        ) : '—'}
+                      </td>
+
+                      {/* التأخير */}
+                      <td className="p-1 border border-slate-300 text-center font-mono">
+                        {isLate ? (
+                          <span className="text-red-700 font-black">
+                            {d.delayMinutes} {isRtl ? 'د' : 'm'}
+                          </span>
+                        ) : '—'}
+                      </td>
+
+                      {/* الإضافي */}
+                      <td className="p-1 border border-slate-300 text-center font-mono">
+                        {isOvertime ? (
+                          <span className="text-blue-700 font-black">
+                            {(d.overtimeMinutes / 60).toFixed(1)} {isRtl ? 'س' : 'h'}
+                          </span>
+                        ) : '—'}
+                      </td>
+
+                      {/* حالة اليوم */}
+                      <td className="p-1 border border-slate-300 text-center">
+                        <span className={cn(
+                          "px-1 py-0.2 rounded text-[7.5px] font-black inline-block",
+                          d.statusKey === 'present' && "bg-emerald-100 text-emerald-900 border border-emerald-300",
+                          d.statusKey === 'late' && "bg-amber-100 text-amber-900 border border-amber-300",
+                          d.statusKey === 'off_overtime' && "bg-teal-100 text-teal-900 border border-teal-300",
+                          d.statusKey === 'mission' && "bg-purple-100 text-purple-900 border border-purple-300",
+                          d.statusKey === 'leave' && "bg-amber-100 text-amber-900 border border-amber-300",
+                          d.statusKey === 'wfh' && "bg-indigo-100 text-indigo-900 border border-indigo-300",
+                          d.statusKey === 'absent' && "bg-red-100 text-red-900 border border-red-400 font-black",
+                          d.statusKey === 'holiday' && "bg-amber-50 text-amber-900 border border-amber-200",
+                          d.statusKey === 'weekend' && "bg-slate-200 text-slate-700 border border-slate-300"
+                        )}>
+                          {d.statusLabel}
+                        </span>
+                      </td>
+
+                      {/* الإجازة */}
+                      <td className="p-1 border border-slate-300 text-center text-[7.5px] truncate max-w-[70px]">
+                        {d.leaveType !== '-' ? d.leaveType : '—'}
+                      </td>
+
+                      {/* المأمورية */}
+                      <td className="p-1 border border-slate-300 text-center text-[7.5px] truncate max-w-[80px]">
+                        {d.missionName !== '-' ? d.missionName : '—'}
+                      </td>
+
+                      {/* العمل عن بُعد */}
+                      <td className="p-1 border border-slate-300 text-center text-[7.5px]">
+                        {d.isWfh ? (isRtl ? 'نعم' : 'Yes') : '—'}
+                      </td>
+
+                      {/* العطلة الرسمية */}
+                      <td className="p-1 border border-slate-300 text-center text-[7.5px] truncate max-w-[70px]">
+                        {d.holidayLabel !== '-' ? d.holidayLabel : '—'}
+                      </td>
+
+                      {/* الملاحظات */}
+                      <td className="p-1 border border-slate-300 text-center text-[7px] text-slate-600 truncate max-w-[60px]">
+                        {d.notes || d.deviceName || '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 4. ملخص التقرير في النهاية (Summary Block: 8 Key Metrics) */}
+          <div className="border-2 border-slate-900 bg-slate-50 p-2.5">
+            <div className="flex items-center justify-between border-b border-slate-300 pb-1 mb-2">
+              <h3 className="text-[10px] font-black text-slate-900 uppercase">
+                {isRtl ? 'ملخص الحضور والانصراف الشهري / Monthly KPI Summary' : 'Monthly Attendance & Absence Summary'}
+              </h3>
+              <span className="text-[8px] font-bold text-slate-500">
+                {isRtl ? `إجمالي أيام الشهر: ${stats.totalDays} يوماً` : `Total Days: ${stats.totalDays}`}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 text-center">
+              {/* 1. أيام الحضور */}
+              <div className="bg-white border border-slate-300 p-1.5">
+                <span className="text-[7.5px] font-bold text-slate-500 block">{isRtl ? 'أيام الحضور' : 'Present Days'}</span>
+                <span className="text-xs font-black text-emerald-700 block mt-0.5 tabular-nums">{stats.presentCount} <span className="text-[7.5px]">{isRtl ? 'يوم' : 'd'}</span></span>
+              </div>
+
+              {/* 2. الغياب */}
+              <div className="bg-white border border-slate-300 p-1.5">
+                <span className="text-[7.5px] font-bold text-slate-500 block">{isRtl ? 'الغياب' : 'Absence Days'}</span>
+                <span className="text-xs font-black text-red-700 block mt-0.5 tabular-nums">{stats.absentCount} <span className="text-[7.5px]">{isRtl ? 'يوم' : 'd'}</span></span>
+              </div>
+
+              {/* 3. المأموريات */}
+              <div className="bg-white border border-slate-300 p-1.5">
+                <span className="text-[7.5px] font-bold text-slate-500 block">{isRtl ? 'المأموريات' : 'Missions'}</span>
+                <span className="text-xs font-black text-purple-700 block mt-0.5 tabular-nums">{stats.missionCount} <span className="text-[7.5px]">{isRtl ? 'يوم' : 'd'}</span></span>
+              </div>
+
+              {/* 4. الإجازات */}
+              <div className="bg-white border border-slate-300 p-1.5">
+                <span className="text-[7.5px] font-bold text-slate-500 block">{isRtl ? 'الإجازات' : 'Leaves'}</span>
+                <span className="text-xs font-black text-amber-700 block mt-0.5 tabular-nums">{stats.leaveCount} <span className="text-[7.5px]">{isRtl ? 'يوم' : 'd'}</span></span>
+              </div>
+
+              {/* 5. العمل عن بُعد */}
+              <div className="bg-white border border-slate-300 p-1.5">
+                <span className="text-[7.5px] font-bold text-slate-500 block">{isRtl ? 'العمل عن بُعد' : 'Remote / WFH'}</span>
+                <span className="text-xs font-black text-indigo-700 block mt-0.5 tabular-nums">{stats.wfhCount} <span className="text-[7.5px]">{isRtl ? 'يوم' : 'd'}</span></span>
+              </div>
+
+              {/* 6. العطلات */}
+              <div className="bg-white border border-slate-300 p-1.5">
+                <span className="text-[7.5px] font-bold text-slate-500 block">{isRtl ? 'العطلات' : 'Holidays'}</span>
+                <span className="text-xs font-black text-slate-700 block mt-0.5 tabular-nums">{stats.weekendHolidayCount} <span className="text-[7.5px]">{isRtl ? 'يوم' : 'd'}</span></span>
+              </div>
+
+              {/* 7. إجمالي التأخير */}
+              <div className="bg-white border border-slate-300 p-1.5">
+                <span className="text-[7.5px] font-bold text-slate-500 block">{isRtl ? 'إجمالي التأخير' : 'Total Delay'}</span>
+                <span className="text-xs font-black text-red-700 block mt-0.5 tabular-nums">{stats.totalDelayMins} <span className="text-[7.5px]">{isRtl ? 'دقيقة' : 'min'}</span></span>
+              </div>
+
+              {/* 8. إجمالي الإضافي */}
+              <div className="bg-white border border-slate-300 p-1.5">
+                <span className="text-[7.5px] font-bold text-slate-500 block">{isRtl ? 'إجمالي الإضافي' : 'Total Overtime'}</span>
+                <span className="text-xs font-black text-blue-700 block mt-0.5 tabular-nums">{(stats.totalOvertimeMins / 60).toFixed(1)} <span className="text-[7.5px]">{isRtl ? 'ساعة' : 'hr'}</span></span>
+              </div>
+            </div>
+          </div>
+
+          {/* 5. تذييل التوقيعات والاعتمادات الرسمية (Signatures Block) */}
+          <div className="pt-2 border-t border-slate-300 grid grid-cols-4 gap-3 text-center text-[8px] font-bold text-slate-800">
+            <div className="space-y-6">
+              <span className="block text-slate-500">{isRtl ? 'توقيع الموظف' : 'Employee Signature'}</span>
+              <div className="border-b border-dotted border-slate-400 w-3/4 mx-auto" />
+            </div>
+            <div className="space-y-6">
+              <span className="block text-slate-500">{isRtl ? 'مسؤول الحضور والانصراف' : 'Attendance Officer'}</span>
+              <div className="border-b border-dotted border-slate-400 w-3/4 mx-auto" />
+            </div>
+            <div className="space-y-6">
+              <span className="block text-slate-500">{isRtl ? 'مدير الموارد البشرية' : 'HR Manager'}</span>
+              <div className="border-b border-dotted border-slate-400 w-3/4 mx-auto" />
+            </div>
+            <div className="space-y-6">
+              <span className="block text-slate-500">{isRtl ? 'الختم الرسمي للمنشأة' : 'Official Seal'}</span>
+              <div className="border-b border-dotted border-slate-400 w-3/4 mx-auto" />
+            </div>
+          </div>
         </div>
       </div>
     </div>

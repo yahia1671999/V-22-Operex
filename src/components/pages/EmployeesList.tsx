@@ -38,6 +38,7 @@ import { usePermissions } from '../../hooks/usePermissions';
 import { useAuth } from '../../AuthContext';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { formatTime12h } from '../../utils/timeFormatter';
+import { calculateEmployeeMonthlyAttendance } from '../../utils/monthlyAttendanceCalculation';
 
 const getSafeAllowances = (allowances: any): Allowance[] => {
   if (Array.isArray(allowances)) return allowances;
@@ -67,6 +68,9 @@ export const EmployeesList: React.FC = () => {
     attendanceRecords = [], 
     missions = [], 
     transactions = [],
+    absenceRecords = [],
+    absenceTypes = [],
+    administrativeNotices = [],
     refreshData 
   } = useData();
   const { t, language } = useLanguage();
@@ -2437,12 +2441,25 @@ export const EmployeesList: React.FC = () => {
                     const empId = printReportEmployee.id;
                     const empCandidateIds = [printReportEmployee.id, printReportEmployee.employeeId, printReportEmployee.userId, printReportEmployee.email].filter(Boolean).map(x => String(x).trim().toLowerCase());
 
+                    // Calculate full monthly attendance statistics using standard calculation engine
+                    const { stats } = calculateEmployeeMonthlyAttendance({
+                      employee: printReportEmployee,
+                      month: reportMonth,
+                      attendanceRecords,
+                      attendanceShifts,
+                      missions,
+                      leaveRequests,
+                      absenceRecords,
+                      absenceTypes,
+                      administrativeNotices,
+                      language
+                    });
+
                     // 1. Attendance Days & Logs
                     const empAttendanceRecords = attendanceRecords.filter(rec => 
                       empCandidateIds.includes(String(rec.employeeId || '').trim().toLowerCase()) && rec.timestamp && rec.timestamp.startsWith(reportMonth)
                     );
-                    const attendanceDaysSet = new Set(empAttendanceRecords.map(rec => rec.timestamp.substring(0, 10)));
-                    const attendanceDaysCount = attendanceDaysSet.size;
+                    const attendanceDaysCount = stats.presentCount;
 
                     // Chronological day logs aggregation
                     const dayLogs: { [date: string]: { checkIn?: string; checkOut?: string; device?: string; note?: string; count: number } } = {};
@@ -2462,32 +2479,23 @@ export const EmployeesList: React.FC = () => {
                     const attendanceDetailsRows = Object.keys(dayLogs).sort().map(day => ({ date: day, ...dayLogs[day] }));
 
                     // 2. Missions Days
-                    const empMissions = missions.filter(m => 
-                      m.employeeId === empId && m.status === 'Approved' && 
+                    const empMissions = (missions || []).filter(m => 
+                      empCandidateIds.includes(String(m.employeeId || '').trim().toLowerCase()) &&
                       (m.startDate?.startsWith(reportMonth) || m.endDate?.startsWith(reportMonth))
                     );
-                    let missionsDaysCount = 0;
-                    empMissions.forEach(m => {
-                      const days = Math.max(1, Math.round((new Date(m.endDate).getTime() - new Date(m.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1);
-                      missionsDaysCount += days;
-                    });
+                    const missionsDaysCount = stats.missionCount;
 
-                    // 3. Leaves Days (Approved & Rejected)
-                    const empLeaves = leaveRequests.filter(r => 
-                      r.employeeId === empId && (r.status === 'Approved' || r.status === 'Rejected') && 
+                    // 3. Leaves Days & WFH
+                    const empLeaves = (leaveRequests || []).filter(r => 
+                      empCandidateIds.includes(String(r.employeeId || '').trim().toLowerCase()) &&
                       (r.startDate?.startsWith(reportMonth) || r.endDate?.startsWith(reportMonth))
                     );
-                    let wfhDaysCount = 0;
-                    let leavesDaysCount = 0;
-                    empLeaves.filter(r => r.status === 'Approved').forEach(r => {
-                      const days = Math.max(1, Math.round((new Date(r.endDate).getTime() - new Date(r.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1);
-                      if (r.type === 'WorkFromHome') wfhDaysCount += days;
-                      else leavesDaysCount += days;
-                    });
+                    const wfhDaysCount = stats.wfhCount;
+                    const leavesDaysCount = stats.leaveCount;
 
                     // 4. Absence Days
                     const matchingTx = transactions.find((tx: any) => tx.employeeId === empId && tx.month === reportMonth);
-                    const absenceDaysCount = matchingTx?.absenceDays || 0;
+                    const absenceDaysCount = matchingTx?.absenceDays !== undefined ? matchingTx.absenceDays : stats.absentCount;
 
                     // 5. Appraisals / Performance
                     const empEvaluations = performanceEvaluations.filter(
