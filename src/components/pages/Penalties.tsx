@@ -178,13 +178,53 @@ export const Penalties: React.FC = () => {
 
   // Handlers for Editing & Deleting Investigations
   const handleOpenEditInv = (inv: any) => {
-    let empArr: string[] = [];
+    let rawIds: string[] = [];
     try {
-      empArr =
+      rawIds =
         typeof inv.employeeIds === "string"
           ? JSON.parse(inv.employeeIds)
           : inv.employeeIds || [];
-    } catch (e) {}
+    } catch (e) {
+      if (typeof inv.employeeIds === "string" && inv.employeeIds) {
+        rawIds = [inv.employeeIds];
+      }
+    }
+    if (!Array.isArray(rawIds)) rawIds = [];
+    if (inv.employeeId && !rawIds.includes(inv.employeeId)) {
+      rawIds.unshift(inv.employeeId);
+    }
+
+    // Resolve unique employee IDs (keyed by employeeId || id)
+    const seenKeys = new Set<string>();
+    const initialSelectedIds: string[] = [];
+
+    rawIds.forEach((rawId) => {
+      if (!rawId || typeof rawId !== "string") return;
+      const cleanId = rawId.trim();
+      if (!cleanId) return;
+
+      const emp = employees.find(
+        (e) =>
+          e.id === cleanId ||
+          (e.employeeId && e.employeeId === cleanId) ||
+          ((e as any).userId && (e as any).userId === cleanId),
+      );
+
+      if (emp) {
+        const uKey = emp.employeeId || emp.id;
+        if (!seenKeys.has(uKey)) {
+          seenKeys.add(uKey);
+          if (emp.id) seenKeys.add(emp.id);
+          if (emp.employeeId) seenKeys.add(emp.employeeId);
+          initialSelectedIds.push(uKey);
+        }
+      } else {
+        if (!seenKeys.has(cleanId)) {
+          seenKeys.add(cleanId);
+          initialSelectedIds.push(cleanId);
+        }
+      }
+    });
 
     setEditInvModal({
       isOpen: true,
@@ -197,8 +237,7 @@ export const Penalties: React.FC = () => {
       location: inv.location || "مكتب الشؤون القانونية",
       investigatorName:
         inv.investigatorName || currentUser?.name || "المستشار القانوني",
-      selectedEmployeeIds:
-        empArr.length > 0 ? empArr : [inv.employeeId].filter(Boolean),
+      selectedEmployeeIds: initialSelectedIds,
       saving: false,
     });
   };
@@ -212,35 +251,65 @@ export const Penalties: React.FC = () => {
     }
     setEditInvModal((prev) => ({ ...prev, saving: true }));
     try {
-      const selectedEmps = employees.filter(
-        (e) =>
-          editInvModal.selectedEmployeeIds.includes(e.id) ||
-          editInvModal.selectedEmployeeIds.includes(e.employeeId),
-      );
-      const empNames = selectedEmps.map((e) => e.name).join(", ");
+      // Deduplicate selected employees strictly by unique employee identity
+      const seenEmpKeys = new Set<string>();
+      const selectedEmps: any[] = [];
+
+      editInvModal.selectedEmployeeIds.forEach((selId) => {
+        if (!selId || typeof selId !== "string") return;
+        const cleanId = selId.trim();
+        if (!cleanId) return;
+
+        const emp = employees.find(
+          (e) =>
+            e.id === cleanId ||
+            (e.employeeId && e.employeeId === cleanId) ||
+            ((e as any).userId && (e as any).userId === cleanId),
+        );
+
+        if (emp) {
+          const uKey = emp.employeeId || emp.id;
+          if (!seenEmpKeys.has(uKey)) {
+            seenEmpKeys.add(uKey);
+            if (emp.id) seenEmpKeys.add(emp.id);
+            if (emp.employeeId) seenEmpKeys.add(emp.employeeId);
+            selectedEmps.push(emp);
+          }
+        }
+      });
+
+      if (selectedEmps.length === 0) {
+        alert("يرجى اختيار الموظفين المعنيين بالتحقيق");
+        setEditInvModal((prev) => ({ ...prev, saving: false }));
+        return;
+      }
+
+      const uniqueEmployeeIds = selectedEmps.map((e) => e.employeeId || e.id);
+      const empNames = selectedEmps.map((e) => e.name).join("، ");
 
       const allAudienceSet = new Set<string>();
       const managerIds: string[] = [];
 
       selectedEmps.forEach((emp) => {
-        [emp.id, emp.employeeId, emp.userId, emp.email]
+        [emp.id, emp.employeeId, (emp as any).userId, emp.email]
           .filter(Boolean)
           .forEach((val) =>
             allAudienceSet.add(String(val).toLowerCase().trim()),
           );
-        const mgrId = emp.managerId || emp.directManagerId;
+        const mgrId = emp.managerId || (emp as any).directManagerId;
         if (mgrId) {
-          if (!managerIds.includes(mgrId)) managerIds.push(mgrId);
-          allAudienceSet.add(String(mgrId).toLowerCase().trim());
+          const mgrIdStr = String(mgrId).toLowerCase().trim();
+          if (!managerIds.includes(mgrIdStr)) managerIds.push(mgrIdStr);
+          allAudienceSet.add(mgrIdStr);
           const mgrObj = employees.find(
             (e) =>
               e.id === mgrId ||
               e.employeeId === mgrId ||
-              e.userId === mgrId ||
+              (e as any).userId === mgrId ||
               e.email === mgrId,
           );
           if (mgrObj) {
-            [mgrObj.id, mgrObj.employeeId, mgrObj.userId, mgrObj.email]
+            [mgrObj.id, mgrObj.employeeId, (mgrObj as any).userId, mgrObj.email]
               .filter(Boolean)
               .forEach((val) =>
                 allAudienceSet.add(String(val).toLowerCase().trim()),
@@ -258,12 +327,8 @@ export const Penalties: React.FC = () => {
         investigationTime: editInvModal.investigationTime,
         location: editInvModal.location,
         investigatorName: editInvModal.investigatorName,
-        employeeId:
-          selectedEmps[0]?.id ||
-          selectedEmps[0]?.employeeId ||
-          editInvModal.selectedEmployeeIds[0] ||
-          "",
-        employeeIds: JSON.stringify(allEmpIdentifiers),
+        employeeId: selectedEmps[0]?.employeeId || selectedEmps[0]?.id || "",
+        employeeIds: JSON.stringify(uniqueEmployeeIds),
         employeeName: empNames,
         managerIds: JSON.stringify(managerIds),
         updatedAt: new Date().toISOString(),
@@ -1334,68 +1399,68 @@ export const Penalties: React.FC = () => {
       const invCount = (investigations || []).length + 1;
       const invNum = `INV-${new Date().getFullYear()}-${String(invCount).padStart(4, "0")}`;
 
-      // Get manager IDs & all identifiers for selected employees
-      const managerIds: string[] = [];
-      const selectedEmps = employees.filter((e) =>
-        invFormData.selectedEmployeeIds.some(
-          (selId) =>
-            String(selId).trim().toLowerCase() ===
-              String(e.id).trim().toLowerCase() ||
-            String(selId).trim().toLowerCase() ===
-              String(e.employeeId || "")
-                .trim()
-                .toLowerCase() ||
-            String(selId).trim().toLowerCase() ===
-              String(e.userId || "")
-                .trim()
-                .toLowerCase() ||
-            String(selId).trim().toLowerCase() ===
-              String(e.email || "")
-                .trim()
-                .toLowerCase(),
-        ),
-      );
-      const empNames = selectedEmps.map((e) => e.name).join(", ");
+      // Resolve distinct employees strictly by unique employee identity (employeeId or id)
+      const seenEmpKeys = new Set<string>();
+      const selectedEmps: any[] = [];
+
+      invFormData.selectedEmployeeIds.forEach((selId) => {
+        if (!selId || typeof selId !== "string") return;
+        const cleanId = selId.trim();
+        if (!cleanId) return;
+
+        const emp = employees.find(
+          (e) =>
+            e.id === cleanId ||
+            (e.employeeId && e.employeeId === cleanId) ||
+            ((e as any).userId && (e as any).userId === cleanId),
+        );
+
+        if (emp) {
+          const uKey = emp.employeeId || emp.id;
+          if (!seenEmpKeys.has(uKey)) {
+            seenEmpKeys.add(uKey);
+            if (emp.id) seenEmpKeys.add(emp.id);
+            if (emp.employeeId) seenEmpKeys.add(emp.employeeId);
+            selectedEmps.push(emp);
+          }
+        }
+      });
+
+      if (selectedEmps.length === 0) {
+        alert("يرجى اختيار الموظفين المعنيين بالتحقيق");
+        return;
+      }
+
+      const uniqueEmployeeIds = selectedEmps.map((e) => e.employeeId || e.id);
+      const empNames = selectedEmps.map((e) => e.name).join("، ");
 
       const allEmpIdentifiersSet = new Set<string>();
-      invFormData.selectedEmployeeIds.forEach((id) =>
-        allEmpIdentifiersSet.add(String(id).toLowerCase().trim()),
-      );
+      const managerIds: string[] = [];
 
       selectedEmps.forEach((emp) => {
-        [emp.id, emp.employeeId, emp.userId, emp.email, emp.name]
+        [emp.id, emp.employeeId, (emp as any).userId, emp.email]
           .filter(Boolean)
           .forEach((val) =>
             allEmpIdentifiersSet.add(String(val).toLowerCase().trim()),
           );
-        const mgrId = emp.managerId || emp.directManagerId;
+        const mgrId = emp.managerId || (emp as any).directManagerId;
         if (mgrId) {
           const mgrIdStr = String(mgrId).toLowerCase().trim();
           if (!managerIds.includes(mgrIdStr)) managerIds.push(mgrIdStr);
           allEmpIdentifiersSet.add(mgrIdStr);
           const mgrObj = employees.find(
             (e) =>
-              String(e.id).toLowerCase().trim() === mgrIdStr ||
-              String(e.employeeId || "")
-                .toLowerCase()
-                .trim() === mgrIdStr ||
-              String(e.userId || "")
-                .toLowerCase()
-                .trim() === mgrIdStr ||
-              String(e.email || "")
-                .toLowerCase()
-                .trim() === mgrIdStr ||
-              String(e.name || "")
-                .toLowerCase()
-                .trim() === mgrIdStr,
+              e.id === mgrId ||
+              e.employeeId === mgrId ||
+              (e as any).userId === mgrId ||
+              e.email === mgrId,
           );
           if (mgrObj) {
             [
               mgrObj.id,
               mgrObj.employeeId,
-              mgrObj.userId,
+              (mgrObj as any).userId,
               mgrObj.email,
-              mgrObj.name,
             ]
               .filter(Boolean)
               .forEach((val) =>
@@ -1420,12 +1485,8 @@ export const Penalties: React.FC = () => {
         investigationDate: invFormData.investigationDate,
         investigationTime: invFormData.investigationTime,
         location: invFormData.location,
-        employeeId:
-          selectedEmps[0]?.id ||
-          selectedEmps[0]?.employeeId ||
-          invFormData.selectedEmployeeIds[0] ||
-          "",
-        employeeIds: JSON.stringify(allEmpIdentifiers),
+        employeeId: selectedEmps[0]?.employeeId || selectedEmps[0]?.id || "",
+        employeeIds: JSON.stringify(uniqueEmployeeIds),
         employeeName: empNames,
         managerIds: JSON.stringify(managerIds),
         investigatorName: invFormData.investigatorName,
@@ -2080,16 +2141,61 @@ export const Penalties: React.FC = () => {
                             typeof inv.employeeIds === "string"
                               ? JSON.parse(inv.employeeIds)
                               : inv.employeeIds || [];
-                        } catch (e) {}
+                        } catch (e) {
+                          if (typeof inv.employeeIds === "string" && inv.employeeIds) {
+                            empArr = [inv.employeeIds];
+                          }
+                        }
+                        if (!Array.isArray(empArr)) empArr = [];
+                        if (inv.employeeId && !empArr.includes(inv.employeeId)) {
+                          empArr.unshift(inv.employeeId);
+                        }
 
-                        const empNames = empArr
-                          .map((eId) => {
-                            const emp = employees.find(
-                              (e) => e.id === eId || e.employeeId === eId,
-                            );
-                            return emp?.name || eId;
-                          })
-                          .join("، ");
+                        // Deduplicate resolved employees strictly by unique employee identity
+                        const seenEmpKeys = new Set<string>();
+                        const distinctEmps: any[] = [];
+                        const unmatchedNames: string[] = [];
+
+                        empArr.forEach((eId) => {
+                          if (!eId || typeof eId !== "string") return;
+                          const cleanId = eId.trim();
+                          if (!cleanId) return;
+
+                          const emp = employees.find(
+                            (e) =>
+                              e.id === cleanId ||
+                              (e.employeeId && e.employeeId === cleanId) ||
+                              ((e as any).userId && (e as any).userId === cleanId),
+                          );
+
+                          if (emp) {
+                            const uKey = emp.employeeId || emp.id;
+                            if (!seenEmpKeys.has(uKey)) {
+                              seenEmpKeys.add(uKey);
+                              if (emp.id) seenEmpKeys.add(emp.id);
+                              if (emp.employeeId) seenEmpKeys.add(emp.employeeId);
+                              distinctEmps.push(emp);
+                            }
+                          } else {
+                            if (!seenEmpKeys.has(cleanId.toLowerCase())) {
+                              seenEmpKeys.add(cleanId.toLowerCase());
+                              unmatchedNames.push(cleanId);
+                            }
+                          }
+                        });
+
+                        let empNames = distinctEmps.map((e) => e.name).join("، ");
+                        if (!empNames) {
+                          if (unmatchedNames.length > 0) {
+                            empNames = unmatchedNames.join("، ");
+                          } else if (inv.employeeName) {
+                            const parts = String(inv.employeeName)
+                              .split(/[,،]/)
+                              .map((n: string) => n.trim())
+                              .filter(Boolean);
+                            empNames = Array.from(new Set(parts)).join("، ");
+                          }
+                        }
 
                         return (
                           <tr
@@ -3708,9 +3814,11 @@ export const Penalties: React.FC = () => {
                 </label>
                 <div className="bg-muted/30 border border-border p-3 max-h-48 overflow-y-auto space-y-2">
                   {employees.map((emp) => {
-                    const isChecked = invFormData.selectedEmployeeIds.includes(
-                      emp.id,
-                    );
+                    const empUniqueKey = emp.employeeId || emp.id;
+                    const isChecked =
+                      invFormData.selectedEmployeeIds.includes(emp.id) ||
+                      (emp.employeeId &&
+                        invFormData.selectedEmployeeIds.includes(emp.employeeId));
                     return (
                       <label
                         key={emp.id}
@@ -3718,22 +3826,28 @@ export const Penalties: React.FC = () => {
                       >
                         <input
                           type="checkbox"
-                          checked={isChecked}
+                          checked={!!isChecked}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setInvFormData((prev) => ({
-                                ...prev,
-                                selectedEmployeeIds: [
-                                  ...prev.selectedEmployeeIds,
-                                  emp.id,
-                                ],
-                              }));
+                              setInvFormData((prev) => {
+                                const filtered = prev.selectedEmployeeIds.filter(
+                                  (id) =>
+                                    id !== emp.id &&
+                                    (!emp.employeeId || id !== emp.employeeId),
+                                );
+                                return {
+                                  ...prev,
+                                  selectedEmployeeIds: [...filtered, empUniqueKey],
+                                };
+                              });
                             } else {
                               setInvFormData((prev) => ({
                                 ...prev,
                                 selectedEmployeeIds:
                                   prev.selectedEmployeeIds.filter(
-                                    (id) => id !== emp.id,
+                                    (id) =>
+                                      id !== emp.id &&
+                                      (!emp.employeeId || id !== emp.employeeId),
                                   ),
                               }));
                             }
@@ -3814,7 +3928,55 @@ export const Penalties: React.FC = () => {
               </p>
               <p className="font-bold text-foreground">
                 <span className="text-muted-foreground">الموظف المعني:</span>{" "}
-                {invResultModal.investigation.employeeName || "غير محدد"}
+                {(() => {
+                  if (!invResultModal.investigation) return "غير محدد";
+                  const inv = invResultModal.investigation;
+                  let empArr: string[] = [];
+                  try {
+                    empArr =
+                      typeof inv.employeeIds === "string"
+                        ? JSON.parse(inv.employeeIds)
+                        : inv.employeeIds || [];
+                  } catch (e) {
+                    if (typeof inv.employeeIds === "string" && inv.employeeIds)
+                      empArr = [inv.employeeIds];
+                  }
+                  if (!Array.isArray(empArr)) empArr = [];
+                  if (inv.employeeId && !empArr.includes(inv.employeeId))
+                    empArr.unshift(inv.employeeId);
+
+                  const seen = new Set<string>();
+                  const resolved: any[] = [];
+                  empArr.forEach((eId) => {
+                    if (!eId || typeof eId !== "string") return;
+                    const cleanId = eId.trim();
+                    const emp = employees.find(
+                      (e) =>
+                        e.id === cleanId ||
+                        (e.employeeId && e.employeeId === cleanId) ||
+                        ((e as any).userId && (e as any).userId === cleanId),
+                    );
+                    if (emp) {
+                      const uKey = emp.employeeId || emp.id;
+                      if (!seen.has(uKey)) {
+                        seen.add(uKey);
+                        if (emp.id) seen.add(emp.id);
+                        if (emp.employeeId) seen.add(emp.employeeId);
+                        resolved.push(emp);
+                      }
+                    }
+                  });
+                  if (resolved.length > 0)
+                    return resolved.map((e) => e.name).join("، ");
+                  if (inv.employeeName) {
+                    const parts = String(inv.employeeName)
+                      .split(/[,،]/)
+                      .map((n: string) => n.trim())
+                      .filter(Boolean);
+                    return Array.from(new Set(parts)).join("، ");
+                  }
+                  return "غير محدد";
+                })()}
               </p>
             </div>
 
@@ -4138,9 +4300,11 @@ export const Penalties: React.FC = () => {
                 </label>
                 <div className="bg-muted/30 border border-border p-3 max-h-48 overflow-y-auto space-y-2">
                   {employees.map((emp) => {
+                    const empUniqueKey = emp.employeeId || emp.id;
                     const isChecked =
                       editInvModal.selectedEmployeeIds.includes(emp.id) ||
-                      editInvModal.selectedEmployeeIds.includes(emp.employeeId);
+                      (emp.employeeId &&
+                        editInvModal.selectedEmployeeIds.includes(emp.employeeId));
                     return (
                       <label
                         key={emp.id}
@@ -4148,23 +4312,28 @@ export const Penalties: React.FC = () => {
                       >
                         <input
                           type="checkbox"
-                          checked={isChecked}
+                          checked={!!isChecked}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setEditInvModal((prev) => ({
-                                ...prev,
-                                selectedEmployeeIds: [
-                                  ...prev.selectedEmployeeIds,
-                                  emp.id,
-                                ],
-                              }));
+                              setEditInvModal((prev) => {
+                                const filtered = prev.selectedEmployeeIds.filter(
+                                  (id) =>
+                                    id !== emp.id &&
+                                    (!emp.employeeId || id !== emp.employeeId),
+                                );
+                                return {
+                                  ...prev,
+                                  selectedEmployeeIds: [...filtered, empUniqueKey],
+                                };
+                              });
                             } else {
                               setEditInvModal((prev) => ({
                                 ...prev,
                                 selectedEmployeeIds:
                                   prev.selectedEmployeeIds.filter(
                                     (id) =>
-                                      id !== emp.id && id !== emp.employeeId,
+                                      id !== emp.id &&
+                                      (!emp.employeeId || id !== emp.employeeId),
                                   ),
                               }));
                             }

@@ -2548,10 +2548,75 @@ async function startServer() {
   app.get("/api/investigations", authenticateJWT, async (req, res) => {
     try {
       const records = await db.select().from(schema.investigations).orderBy(desc(schema.investigations.createdAt));
-      
+      const dbEmps = await db.select().from(schema.employees);
+
+      // Clean and sanitize records so no duplicate employee names or IDs are returned per investigation
+      const sanitizedRecords = records.map(r => {
+        let empArr: string[] = [];
+        try {
+          empArr = typeof r.employeeIds === 'string' ? JSON.parse(r.employeeIds) : (r.employeeIds || []);
+        } catch(e) {
+          if (typeof r.employeeIds === 'string' && r.employeeIds) empArr = [r.employeeIds];
+        }
+        if (!Array.isArray(empArr)) empArr = [];
+        if (r.employeeId && !empArr.includes(r.employeeId)) {
+          empArr.unshift(r.employeeId);
+        }
+
+        const seenKeys = new Set<string>();
+        const resolvedEmps: any[] = [];
+        const unmatchedNames: string[] = [];
+
+        empArr.forEach(rawId => {
+          if (!rawId || typeof rawId !== 'string') return;
+          const cleanId = rawId.trim();
+          if (!cleanId) return;
+
+          const emp = dbEmps.find(e => 
+            e.id === cleanId || 
+            (e.employeeId && e.employeeId === cleanId) || 
+            ((e as any).userId && (e as any).userId === cleanId)
+          );
+
+          if (emp) {
+            const uKey = emp.employeeId || emp.id;
+            if (!seenKeys.has(uKey)) {
+              seenKeys.add(uKey);
+              if (emp.id) seenKeys.add(emp.id);
+              if (emp.employeeId) seenKeys.add(emp.employeeId);
+              resolvedEmps.push(emp);
+            }
+          } else {
+            if (!seenKeys.has(cleanId.toLowerCase())) {
+              seenKeys.add(cleanId.toLowerCase());
+              unmatchedNames.push(cleanId);
+            }
+          }
+        });
+
+        let cleanNames = resolvedEmps.map(e => e.name).join('، ');
+        if (!cleanNames) {
+          if (unmatchedNames.length > 0) {
+            cleanNames = unmatchedNames.join('، ');
+          } else if (r.employeeName) {
+            const parts = String(r.employeeName).split(/[,،]/).map(n => n.trim()).filter(Boolean);
+            cleanNames = Array.from(new Set(parts)).join('، ');
+          }
+        }
+
+        const uniqueEmpIds = resolvedEmps.map(e => e.employeeId || e.id);
+
+        return {
+          ...r,
+          employeeName: cleanNames || r.employeeName || '—',
+          employeeIds: uniqueEmpIds.length > 0 ? JSON.stringify(uniqueEmpIds) : (r.employeeIds || '[]'),
+          employeeId: resolvedEmps[0]?.employeeId || resolvedEmps[0]?.id || r.employeeId || ''
+        };
+      });
+
       // Deduplicate so each investigation topic & date & employee appears exactly ONCE
       const seen = new Set<string>();
-      const uniqueRecords = records.filter(r => {
+      const uniqueRecords = sanitizedRecords.filter(r => {
         const cleanTitle = (r.title || '')
           .replace(/^استدعاء جلسة تحقيق إداري -\s*/i, '')
           .replace(/^تحقيق إداري -\s*/i, '')
@@ -2577,9 +2642,7 @@ async function startServer() {
       const data = { ...req.body };
       if (!data.id) data.id = crypto.randomUUID();
 
-      let empId = data.employeeId || '';
       let empIdsArray: string[] = [];
-
       if (Array.isArray(data.employeeIds)) {
         empIdsArray = data.employeeIds;
       } else if (typeof data.employeeIds === 'string' && data.employeeIds.startsWith('[')) {
@@ -2588,23 +2651,40 @@ async function startServer() {
         empIdsArray = [data.employeeIds];
       }
 
-      if (!empId && empIdsArray.length > 0) {
-        empId = empIdsArray[0];
-      }
-      if (empId && !empIdsArray.includes(empId)) {
-        empIdsArray.push(empId);
+      if (data.employeeId && !empIdsArray.includes(data.employeeId)) {
+        empIdsArray.unshift(data.employeeId);
       }
 
-      let empName = data.employeeName || '';
-      if (!empName && empId) {
-        const empMatch = await db.select().from(schema.employees).where(or(
-          eq(schema.employees.id, empId),
-          eq(schema.employees.employeeId, empId)
-        ));
-        if (empMatch && empMatch.length > 0) {
-          empName = empMatch[0].name;
+      // Deduplicate employees strictly by unique employee identity (employeeId or id)
+      const dbEmps = await db.select().from(schema.employees);
+      const targetedEmps: any[] = [];
+      const seenEmpKeys = new Set<string>();
+
+      empIdsArray.forEach(rawId => {
+        if (!rawId || typeof rawId !== 'string') return;
+        const cleanId = rawId.trim();
+        if (!cleanId) return;
+
+        const emp = dbEmps.find(e => 
+          e.id === cleanId || 
+          (e.employeeId && e.employeeId === cleanId) || 
+          ((e as any).userId && (e as any).userId === cleanId)
+        );
+
+        if (emp) {
+          const uKey = emp.employeeId || emp.id;
+          if (!seenEmpKeys.has(uKey)) {
+            seenEmpKeys.add(uKey);
+            if (emp.id) seenEmpKeys.add(emp.id);
+            if (emp.employeeId) seenEmpKeys.add(emp.employeeId);
+            targetedEmps.push(emp);
+          }
         }
-      }
+      });
+
+      const uniqueEmpIds = targetedEmps.map(e => e.employeeId || e.id);
+      let empId = targetedEmps[0]?.employeeId || targetedEmps[0]?.id || data.employeeId || '';
+      let empName = targetedEmps.length > 0 ? targetedEmps.map(e => e.name).join('، ') : (data.employeeName || '');
 
       const cleanTitle = String(data.title || 'تحقيق إداري')
         .replace(/^استدعاء جلسة تحقيق إداري -\s*/i, '')
@@ -2620,7 +2700,7 @@ async function startServer() {
         location: data.location || 'الشؤون القانونية',
         employeeId: empId,
         employeeName: empName,
-        employeeIds: typeof data.employeeIds === 'string' ? data.employeeIds : JSON.stringify(empIdsArray),
+        employeeIds: JSON.stringify(uniqueEmpIds.length > 0 ? uniqueEmpIds : empIdsArray),
         managerIds: typeof data.managerIds === 'string' ? data.managerIds : JSON.stringify(data.managerIds || []),
         investigatorName: data.investigatorName || 'المستشار القانوني',
         status: data.status || 'Scheduled',
@@ -2669,33 +2749,9 @@ async function startServer() {
       // Auto-create & sync Administrative Notice for the invited employee AND direct manager
       try {
         const allTargetIdentifiers = new Set<string>();
-        
-        let targetEmpIds: string[] = [];
-        if (Array.isArray(data.employeeIds)) {
-          targetEmpIds = data.employeeIds;
-        } else if (typeof data.employeeIds === 'string' && data.employeeIds.startsWith('[')) {
-          try { targetEmpIds = JSON.parse(data.employeeIds); } catch (e) {}
-        } else if (data.employeeIds) {
-          targetEmpIds = [String(data.employeeIds)];
-        }
-        if (data.employeeId) targetEmpIds.push(String(data.employeeId));
-
-        targetEmpIds.forEach(id => {
-          if (id) allTargetIdentifiers.add(String(id).toLowerCase().trim());
-        });
-
-        const dbEmps = await db.select().from(schema.employees);
-        const targetedEmps = dbEmps.filter(e => 
-          targetEmpIds.some(tid => 
-            String(tid).toLowerCase().trim() === String(e.id).toLowerCase().trim() ||
-            String(tid).toLowerCase().trim() === String(e.employeeId || '').toLowerCase().trim() ||
-            String(tid).toLowerCase().trim() === String((e as any).userId || '').toLowerCase().trim() ||
-            String(tid).toLowerCase().trim() === String(e.email || '').toLowerCase().trim()
-          )
-        );
 
         targetedEmps.forEach(e => {
-          [e.id, e.employeeId, (e as any).userId, e.email, e.name].filter(Boolean).forEach(v => allTargetIdentifiers.add(String(v).toLowerCase().trim()));
+          [e.id, e.employeeId, (e as any).userId, e.email].filter(Boolean).forEach(v => allTargetIdentifiers.add(String(v).toLowerCase().trim()));
           
           const mgrId = e.managerId || (e as any).directManagerId;
           if (mgrId) {
@@ -2709,13 +2765,13 @@ async function startServer() {
               String(m.name || '').toLowerCase().trim() === mgrIdStr
             );
             if (mgrObj) {
-              [mgrObj.id, mgrObj.employeeId, (mgrObj as any).userId, mgrObj.email, mgrObj.name].filter(Boolean).forEach(v => allTargetIdentifiers.add(String(v).toLowerCase().trim()));
+              [mgrObj.id, mgrObj.employeeId, (mgrObj as any).userId, mgrObj.email].filter(Boolean).forEach(v => allTargetIdentifiers.add(String(v).toLowerCase().trim()));
             }
           }
         });
 
         const targetAudienceArray = Array.from(allTargetIdentifiers);
-        const targetEmpNames = targetedEmps.map(e => e.name).join(', ') || resultRecord.employeeName || 'الموظف المعني';
+        const targetEmpNames = targetedEmps.map(e => e.name).join('، ') || resultRecord.employeeName || 'الموظف المعني';
 
         const noticeTitle = `استدعاء جلسة تحقيق إداري - ${resultRecord.title}`;
         const noticeContent = `<div style="direction: rtl; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 16px; border-radius: 12px; background-color: #ffffff; border: 2px solid #ef4444; color: #111827; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
@@ -2781,11 +2837,58 @@ async function startServer() {
       const data = { ...req.body };
       delete data.id;
 
-      if (data.employeeIds && Array.isArray(data.employeeIds)) {
-        data.employeeIds = JSON.stringify(data.employeeIds);
+      const dbEmps = await db.select().from(schema.employees);
+
+      if (data.employeeIds) {
+        let rawArr: string[] = [];
+        if (Array.isArray(data.employeeIds)) {
+          rawArr = data.employeeIds;
+        } else if (typeof data.employeeIds === 'string' && data.employeeIds.startsWith('[')) {
+          try { rawArr = JSON.parse(data.employeeIds); } catch(e) {}
+        } else if (typeof data.employeeIds === 'string' && data.employeeIds) {
+          rawArr = [data.employeeIds];
+        }
+
+        if (data.employeeId && !rawArr.includes(data.employeeId)) {
+          rawArr.unshift(data.employeeId);
+        }
+
+        const seenKeys = new Set<string>();
+        const targetEmps: any[] = [];
+        rawArr.forEach(rawId => {
+          if (!rawId || typeof rawId !== 'string') return;
+          const cleanId = rawId.trim();
+          if (!cleanId) return;
+
+          const emp = dbEmps.find(e => 
+            e.id === cleanId || 
+            (e.employeeId && e.employeeId === cleanId) || 
+            ((e as any).userId && (e as any).userId === cleanId)
+          );
+
+          if (emp) {
+            const uKey = emp.employeeId || emp.id;
+            if (!seenKeys.has(uKey)) {
+              seenKeys.add(uKey);
+              if (emp.id) seenKeys.add(emp.id);
+              if (emp.employeeId) seenKeys.add(emp.employeeId);
+              targetEmps.push(emp);
+            }
+          }
+        });
+
+        if (targetEmps.length > 0) {
+          const uniqueIds = targetEmps.map(e => e.employeeId || e.id);
+          data.employeeIds = JSON.stringify(uniqueIds);
+          data.employeeId = uniqueIds[0];
+          data.employeeName = targetEmps.map(e => e.name).join('، ');
+        } else {
+          data.employeeIds = JSON.stringify(Array.from(new Set(rawArr)));
+        }
       }
+
       if (data.managerIds && Array.isArray(data.managerIds)) {
-        data.managerIds = JSON.stringify(data.managerIds);
+        data.managerIds = JSON.stringify(Array.from(new Set(data.managerIds)));
       }
 
       const updated = await db.update(schema.investigations)
