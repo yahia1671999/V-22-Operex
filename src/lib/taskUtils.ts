@@ -757,7 +757,7 @@ export interface ProjectPhaseDetails {
  * Dynamically computes the current active phase of a project based on workflow and task states
  */
 export function getCurrentProjectPhase(
-  project?: { phases?: string[]; status?: string; id?: string } | null,
+  project?: { phases?: string[]; status?: string; id?: string; currentPhase?: string } | null,
   tasks: ProjectTask[] = []
 ): string {
   if (!project) return 'Analysis';
@@ -767,6 +767,11 @@ export function getCurrentProjectPhase(
     : ['Analysis', 'Design', 'Development', 'Testing', 'UAT', 'Go-Live'];
 
   if (phases.length === 0) return 'Analysis';
+
+  // If the project explicitly has a currentPhase specified and it is valid within the project's phases, use it
+  if (project.currentPhase && phases.includes(project.currentPhase)) {
+    return project.currentPhase;
+  }
 
   const projTasks = (project.id ? tasks.filter(t => t.projectId === project.id) : tasks) || [];
   

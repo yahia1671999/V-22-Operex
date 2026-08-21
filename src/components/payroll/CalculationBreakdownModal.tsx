@@ -595,18 +595,18 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
               </div>
               <div className="h-6 w-px bg-border" />
               <div>
-                <span className="text-emerald-600 dark:text-emerald-400 block text-[10px]">{t('إجمالي المستحقات')}</span>
-                <span className="font-black text-emerald-600 dark:text-emerald-400 tabular-nums text-sm">+{formatCurrency(totalEarnings)}</span>
+                <span className="text-emerald-800 dark:text-emerald-300 block text-[10px] font-bold">{t('إجمالي المستحقات')}</span>
+                <span className="font-black text-emerald-800 dark:text-emerald-300 tabular-nums text-sm">+{formatCurrency(totalEarnings)}</span>
               </div>
               <div className="h-6 w-px bg-border" />
               <div>
-                <span className="text-red-600 dark:text-red-400 block text-[10px]">{t('إجمالي الاستقطاعات')}</span>
-                <span className="font-black text-red-600 dark:text-red-400 tabular-nums text-sm">-{formatCurrency(totalDeductions)}</span>
+                <span className="text-rose-800 dark:text-rose-300 block text-[10px] font-bold">{t('إجمالي الاستقطاعات')}</span>
+                <span className="font-black text-rose-800 dark:text-rose-300 tabular-nums text-sm">-{formatCurrency(totalDeductions)}</span>
               </div>
               <div className="h-6 w-px bg-border" />
               <div>
-                <span className="text-blue-600 dark:text-blue-400 block text-[10px]">{t('صافي الراتب المستحق')}</span>
-                <span className="font-black text-blue-600 dark:text-blue-400 tabular-nums text-base">{formatCurrency(netSalary)}</span>
+                <span className="text-primary block text-[10px] font-bold">{t('صافي الراتب المستحق')}</span>
+                <span className="font-black text-primary tabular-nums text-base">{formatCurrency(netSalary)}</span>
               </div>
             </div>
           </div>
@@ -618,9 +618,9 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
               <button 
                 onClick={() => setActiveFilter('all')}
                 className={cn(
-                  "px-4 py-1.5 rounded-xl text-xs font-black transition-all",
+                  "px-4 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer",
                   activeFilter === 'all' 
-                    ? "bg-white dark:bg-slate-800 text-foreground shadow-sm" 
+                    ? "bg-card text-foreground shadow-xs border border-border" 
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
@@ -629,10 +629,10 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
               <button 
                 onClick={() => setActiveFilter('earnings')}
                 className={cn(
-                  "px-4 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5",
+                  "px-4 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
                   activeFilter === 'earnings' 
-                    ? "bg-emerald-500 text-white shadow-sm" 
-                    : "text-emerald-700 dark:text-emerald-400 hover:text-emerald-800"
+                    ? "bg-emerald-600 text-white shadow-xs" 
+                    : "text-emerald-800 dark:text-emerald-300 hover:text-emerald-900 dark:hover:text-emerald-200"
                 )}
               >
                 <ArrowUpRight className="w-3.5 h-3.5" />
@@ -641,10 +641,10 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
               <button 
                 onClick={() => setActiveFilter('deductions')}
                 className={cn(
-                  "px-4 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5",
+                  "px-4 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
                   activeFilter === 'deductions' 
-                    ? "bg-red-500 text-white shadow-sm" 
-                    : "text-red-700 dark:text-red-400 hover:text-red-800"
+                    ? "bg-rose-600 text-white shadow-xs" 
+                    : "text-rose-800 dark:text-rose-300 hover:text-rose-900 dark:hover:text-rose-200"
                 )}
               >
                 <ArrowDownRight className="w-3.5 h-3.5" />
@@ -653,10 +653,10 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
               <button 
                 onClick={() => setActiveFilter('summary')}
                 className={cn(
-                  "px-4 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5",
+                  "px-4 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
                   activeFilter === 'summary' 
-                    ? "bg-indigo-600 text-white shadow-sm" 
-                    : "text-indigo-600 dark:text-indigo-400 hover:text-indigo-700"
+                    ? "bg-primary text-primary-foreground shadow-xs" 
+                    : "text-primary hover:text-primary/80"
                 )}
               >
                 <Scale className="w-3.5 h-3.5" />
@@ -682,8 +682,8 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
             {/* Rules Summary Banner */}
             {activeFilter === 'summary' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-5 rounded-3xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30 space-y-2">
-                  <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 font-black text-sm">
+                <div className="p-5 rounded-3xl bg-blue-50/70 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 space-y-2">
+                  <div className="flex items-center gap-2 text-blue-800 dark:text-blue-300 font-black text-sm">
                     <ShieldCheck className="w-4.5 h-4.5" />
                     <span>{isRtl ? 'قاعدة الراتب الخاضع للاستقطاع (Deductible Base)' : 'Deductible Salary Rule'}</span>
                   </div>
@@ -692,13 +692,13 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
                       ? 'الراتب الخاضع للاستقطاع = (إجمالي الراتب الشامل - بدل السكن). يتم استبعاد بدل السكن قانونياً من وعاء خصم الغياب والإجازات دون أجر.'
                       : 'Deductible Salary = (Gross Salary - Housing Allowance). Housing allowance is strictly shielded from absence and unpaid leave deductions.'}
                   </p>
-                  <div className="p-2.5 bg-white dark:bg-slate-800/70 rounded-xl text-[11px] font-mono font-bold text-blue-700 dark:text-blue-300">
+                  <div className="p-2.5 bg-card rounded-xl text-[11px] font-mono font-bold text-blue-800 dark:text-blue-300 border border-border">
                     Deductible Daily Rate = (Gross - Housing) / 30
                   </div>
                 </div>
 
-                <div className="p-5 rounded-3xl bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/30 space-y-2">
-                  <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-black text-sm">
+                <div className="p-5 rounded-3xl bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900/40 space-y-2">
+                  <div className="flex items-center gap-2 text-indigo-800 dark:text-indigo-300 font-black text-sm">
                     <Clock className="w-4.5 h-4.5" />
                     <span>{isRtl ? 'قاعدة العمل الإضافي وساعات التأخير' : 'Overtime & Delay Hourly Rules'}</span>
                   </div>
@@ -707,7 +707,7 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
                       ? 'أجر ساعة الإضافي = (أساس أجر الإضافي ÷ 30 ÷ ساعات الوردية) × 1.5. بينما خصم ساعات التأخير = (الأساسي ÷ 30 ÷ ساعات الوردية) × ساعات التأخير.'
                       : 'Overtime Hour Rate = (Base / 30 / Shift Hours) × 1.5. Delay Hour Rate = (Basic Salary / 30 / Shift Hours) × Delay Hours.'}
                   </p>
-                  <div className="p-2.5 bg-white dark:bg-slate-800/70 rounded-xl text-[11px] font-mono font-bold text-indigo-700 dark:text-indigo-300">
+                  <div className="p-2.5 bg-card rounded-xl text-[11px] font-mono font-bold text-indigo-800 dark:text-indigo-300 border border-border">
                     Overtime = (Base / 30 / Hours) × 1.5 × OT_Hours
                   </div>
                 </div>
@@ -731,22 +731,22 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: idx * 0.03 }}
                       className={cn(
-                        "p-5 md:p-6 rounded-3xl border transition-all hover:shadow-md relative overflow-hidden group",
+                        "p-5 md:p-6 rounded-3xl border-2 transition-all hover:shadow-md relative overflow-hidden group",
                         isEarning 
-                          ? "bg-card border-border/80 hover:border-emerald-500/40 dark:hover:border-emerald-500/30" 
-                          : "bg-card border-border/80 hover:border-rose-500/40 dark:hover:border-rose-500/30"
+                          ? "bg-card border-emerald-500/25 dark:border-emerald-500/20 hover:border-emerald-500/50" 
+                          : "bg-card border-rose-500/25 dark:border-rose-500/20 hover:border-rose-500/50"
                       )}
                     >
                       {/* Top Header: Title & Badges */}
                       <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-border/60">
                         <div className="flex items-center gap-3">
                           <div className={cn(
-                            "w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm",
+                            "w-10 h-10 rounded-2xl flex items-center justify-center shadow-xs",
                             isEarning 
-                              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" 
-                              : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                              ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30" 
+                              : "bg-rose-500/15 text-rose-800 dark:text-rose-300 border border-rose-500/30"
                           )}>
-                            {isEarning ? <ArrowUpRight className="w-5 h-5" /> : <ArrowDownRight className="w-5 h-5" />}
+                            {isEarning ? <ArrowUpRight className="w-5 h-5 stroke-[2.5]" /> : <ArrowDownRight className="w-5 h-5 stroke-[2.5]" />}
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
@@ -754,8 +754,8 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
                               <span className={cn(
                                 "px-2.5 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider",
                                 isEarning 
-                                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" 
-                                  : "bg-rose-500/10 text-rose-700 dark:text-rose-400"
+                                  ? "bg-emerald-500/15 text-emerald-900 dark:text-emerald-300 border border-emerald-500/25" 
+                                  : "bg-rose-500/15 text-rose-900 dark:text-rose-300 border border-rose-500/25"
                               )}>
                                 {item.category}
                               </span>
@@ -769,8 +769,8 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
                           <div className="text-left">
                             <span className="text-[10px] font-bold text-muted-foreground block">{t('القيمة النهائية الناتجة')}</span>
                             <span className={cn(
-                              "text-xl md:text-2xl font-black tabular-nums tracking-tight",
-                              isEarning ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+                              "text-xl md:text-2xl font-black tabular-nums tracking-tight font-mono",
+                              isEarning ? "text-emerald-800 dark:text-emerald-300" : "text-rose-800 dark:text-rose-300"
                             )}>
                               {isEarning ? '+' : '-'}{formatCurrency(item.finalAmount)}
                             </span>
@@ -779,7 +779,7 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
                           <button 
                             type="button"
                             onClick={() => handleCopyExplanation(item)}
-                            className="p-2 hover:bg-muted text-muted-foreground hover:text-foreground rounded-xl transition-colors no-print"
+                            className="p-2 hover:bg-muted text-muted-foreground hover:text-foreground rounded-xl transition-colors no-print cursor-pointer"
                             title={t('نسخ تفاصيل وشرح الاحتساب')}
                           >
                             {copiedId === item.id ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
@@ -791,7 +791,7 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-4 text-xs">
                         {/* 1. Source */}
                         <div className="p-3.5 bg-muted/40 rounded-2xl border border-border/60">
-                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                          <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-1">
                             {isRtl ? '📍 مصدر الحركة' : '📍 Source of Transaction'}
                           </span>
                           <span className="font-black text-foreground leading-snug block">
@@ -801,37 +801,37 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
 
                         {/* 2. Original Value */}
                         <div className="p-3.5 bg-muted/40 rounded-2xl border border-border/60">
-                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                          <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-1">
                             {isRtl ? '💰 القيمة الأصلية / الأساس' : '💰 Base / Original Value'}
                           </span>
-                          <span className="font-black text-foreground tabular-nums text-sm block">
+                          <span className="font-black text-foreground tabular-nums text-sm block font-mono">
                             {item.originalValueFormatted || formatCurrency(Number(item.originalValue) || 0)}
                           </span>
                         </div>
 
                         {/* 3. Days / Hours Used */}
                         <div className="p-3.5 bg-muted/40 rounded-2xl border border-border/60">
-                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                          <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-1">
                             {isRtl ? '⏱️ عدد الأيام أو الساعات المستخدمة' : '⏱️ Days / Hours Used'}
                           </span>
-                          <span className="font-black text-primary tabular-nums block">
+                          <span className="font-black text-primary tabular-nums block font-mono">
                             {item.unitsUsed}
                           </span>
                         </div>
                       </div>
 
                       {/* Formula & Method Card */}
-                      <div className="mt-3 p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-700/60">
-                        <div className="flex items-center gap-1.5 mb-1.5 text-[11px] font-black text-slate-700 dark:text-slate-300">
-                          <Receipt className="w-3.5 h-3.5 text-indigo-500" />
+                      <div className="mt-3 p-3.5 bg-muted/40 rounded-2xl border border-border/70">
+                        <div className="flex items-center gap-1.5 mb-1.5 text-[11px] font-black text-foreground">
+                          <Receipt className="w-3.5 h-3.5 text-primary" />
                           <span>{isRtl ? 'المعادلة وطريقة الاحتساب المطبقة:' : 'Applied Formula & Calculation Method:'}</span>
                         </div>
-                        <div className="font-mono text-xs text-indigo-900 dark:text-indigo-200 font-bold bg-white dark:bg-slate-900/80 p-2.5 rounded-xl border border-indigo-100 dark:border-indigo-900/30 overflow-x-auto">
+                        <div className="font-mono text-xs text-primary font-bold bg-card p-2.5 rounded-xl border border-border overflow-x-auto">
                           {item.formula}
                         </div>
                         {item.notes && (
                           <p className="text-[11px] text-muted-foreground font-medium mt-2 flex items-center gap-1.5">
-                            <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <Info className="w-3.5 h-3.5 text-primary shrink-0" />
                             <span>{item.notes}</span>
                           </p>
                         )}
@@ -842,23 +842,23 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
               )}
             </div>
 
-            {/* Total Reconciliation Summary Block */}
-            <div className="p-6 md:p-8 rounded-[2rem] bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-xl space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-700/80 pb-4">
+            {/* Total Reconciliation Summary Block (Fully adapts to Global Theme) */}
+            <div className="p-6 md:p-8 rounded-[2rem] bg-slate-100 dark:bg-slate-900/90 text-slate-900 dark:text-white border-2 border-slate-300 dark:border-slate-700/80 shadow-md space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-white">
+                  <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center border border-primary/20">
                     <Scale className="w-6 h-6" />
                   </div>
                   <div>
-                    <h4 className="text-lg font-black">{isRtl ? 'المعادلة الختامية الشاملة لصافي الراتب' : 'Net Salary Total Reconciliation'}</h4>
-                    <p className="text-xs text-slate-400 font-medium">
+                    <h4 className="text-lg font-black text-foreground">{isRtl ? 'المعادلة الختامية الشاملة لصافي الراتب' : 'Net Salary Total Reconciliation'}</h4>
+                    <p className="text-xs text-muted-foreground font-medium">
                       {isRtl ? 'صافي الراتب = إجمالي المستحقات والبدلات - إجمالي الاستقطاعات والخصومات' : 'Net Salary = Total Gross Earnings - Total Deductions'}
                     </p>
                   </div>
                 </div>
                 <div className="text-left">
-                  <span className="text-[10px] text-emerald-400 font-bold uppercase block">{isRtl ? 'الصافي المستحق للصرف' : 'Final Net Payable'}</span>
-                  <span className="text-3xl md:text-4xl font-black tabular-nums text-emerald-400">
+                  <span className="text-[10px] text-muted-foreground font-bold uppercase block">{isRtl ? 'الصافي المستحق للصرف' : 'Final Net Payable'}</span>
+                  <span className="text-3xl md:text-4xl font-black tabular-nums text-emerald-700 dark:text-emerald-400 font-mono">
                     {formatCurrency(netSalary)}
                   </span>
                 </div>
@@ -866,17 +866,17 @@ export const CalculationBreakdownModal: React.FC<CalculationBreakdownModalProps>
 
               {/* Equation line */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-                <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                  <span className="text-xs font-bold text-slate-400 block mb-1">{isRtl ? 'إجمالي المستحقات (Earnings)' : 'Total Gross Earnings'}</span>
-                  <span className="text-xl font-black text-emerald-400 tabular-nums">+{formatCurrency(totalEarnings)}</span>
+                <div className="p-4 bg-card rounded-2xl border-2 border-emerald-500/30">
+                  <span className="text-xs font-bold text-muted-foreground block mb-1">{isRtl ? 'إجمالي المستحقات (Earnings)' : 'Total Gross Earnings'}</span>
+                  <span className="text-xl font-black text-emerald-800 dark:text-emerald-300 font-mono tabular-nums">+{formatCurrency(totalEarnings)}</span>
                 </div>
-                <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                  <span className="text-xs font-bold text-slate-400 block mb-1">{isRtl ? 'إجمالي الاستقطاعات (Deductions)' : 'Total Deductions'}</span>
-                  <span className="text-xl font-black text-rose-400 tabular-nums">-{formatCurrency(totalDeductions)}</span>
+                <div className="p-4 bg-card rounded-2xl border-2 border-rose-500/30">
+                  <span className="text-xs font-bold text-muted-foreground block mb-1">{isRtl ? 'إجمالي الاستقطاعات (Deductions)' : 'Total Deductions'}</span>
+                  <span className="text-xl font-black text-rose-800 dark:text-rose-300 font-mono tabular-nums">-{formatCurrency(totalDeductions)}</span>
                 </div>
-                <div className="p-4 bg-emerald-500/20 rounded-2xl border border-emerald-500/30">
-                  <span className="text-xs font-bold text-emerald-300 block mb-1">{isRtl ? 'صافي المستحق (Net)' : 'Final Net'}</span>
-                  <span className="text-2xl font-black text-white tabular-nums">{formatCurrency(netSalary)}</span>
+                <div className="p-4 bg-emerald-500/15 dark:bg-emerald-950/40 rounded-2xl border-2 border-emerald-500/40">
+                  <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 block mb-1">{isRtl ? 'صافي المستحق (Net)' : 'Final Net'}</span>
+                  <span className="text-2xl font-black text-emerald-800 dark:text-emerald-300 font-mono tabular-nums">{formatCurrency(netSalary)}</span>
                 </div>
               </div>
             </div>

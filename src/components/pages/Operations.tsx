@@ -808,6 +808,26 @@ export const Operations: React.FC = () => {
     }
   };
 
+  const handleUpdateCurrentPhase = async (projectId: string, newPhase: string) => {
+    if (!canEditPhases && !isPM) {
+      alert('عذراً، ليس لديك صلاحية تعديل المرحلة الحالية للمشروع');
+      return;
+    }
+    setIsUpdatingPhases(true);
+    try {
+      const targetPhaseValue = (!newPhase || newPhase === 'auto') ? null : newPhase;
+      await updateDoc(doc(db, 'projects', projectId), {
+        currentPhase: targetPhaseValue,
+        updatedAt: new Date().toISOString()
+      });
+      await refreshData();
+    } catch (error) {
+      console.error('Error updating current project phase:', error);
+    } finally {
+      setIsUpdatingPhases(false);
+    }
+  };
+
   const handleSaveEditedPhase = async (oldPhaseName: string) => {
     if (!canEditPhases) {
       alert('عذراً، ليس لديك صلاحية تعديل وإدارة مراحل المشروع');
@@ -825,11 +845,16 @@ export const Operations: React.FC = () => {
     try {
       const currentPhases = selectedProject.phases || [];
       const updatedPhases = currentPhases.map(p => p === oldPhaseName ? newName : p);
-
-      await updateDoc(doc(db, 'projects', selectedProject.id), {
+      const updatePayload: Record<string, any> = {
         phases: updatedPhases,
         updatedAt: new Date().toISOString()
-      });
+      };
+
+      if (selectedProject.currentPhase === oldPhaseName) {
+        updatePayload.currentPhase = newName;
+      }
+
+      await updateDoc(doc(db, 'projects', selectedProject.id), updatePayload);
 
       // Update phase name on all existing tasks of this project
       const matchingTasks = projectTasks.filter(t => t.projectId === selectedProject.id && t.phase === oldPhaseName);
@@ -869,11 +894,16 @@ export const Operations: React.FC = () => {
     try {
       const currentPhases = selectedProject.phases || [];
       const updatedPhases = currentPhases.filter(p => p !== phaseName);
-
-      await updateDoc(doc(db, 'projects', selectedProject.id), {
+      const updatePayload: Record<string, any> = {
         phases: updatedPhases,
         updatedAt: new Date().toISOString()
-      });
+      };
+
+      if (selectedProject.currentPhase === phaseName) {
+        updatePayload.currentPhase = null;
+      }
+
+      await updateDoc(doc(db, 'projects', selectedProject.id), updatePayload);
 
       await refreshData();
     } catch (error) {
@@ -1544,11 +1574,11 @@ export const Operations: React.FC = () => {
                         {/* Current Project Phase Summary Card */}
                         <div className="p-8 bg-gradient-to-r from-primary/10 via-primary/5 to-card rounded-[2.5rem] border border-primary/20 space-y-6 shadow-sm">
                           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-4 flex-1 flex-wrap">
                               <div className="w-14 h-14 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center shadow-lg shadow-primary/20 shrink-0">
                                 <Milestone className="w-7 h-7" />
                               </div>
-                              <div>
+                              <div className="space-y-1">
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs font-black text-muted-foreground uppercase tracking-widest">
                                     {t('المرحلة الحالية للمشروع')}
@@ -1561,14 +1591,35 @@ export const Operations: React.FC = () => {
                                   <h3 className="text-2xl sm:text-3xl font-black text-foreground">{currentActivePhase}</h3>
                                   <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
                                     <Activity className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
-                                    {t('المرحلة النشطة الحالية')}
+                                    {selectedProject.currentPhase ? t('مرحلة محددة يدوياً') : t('تلقائي حسب حالة المهام')}
                                   </span>
+
+                                  {/* Direct Phase Switcher / Editor */}
+                                  {(canEditPhases || isPM) && (
+                                    <div className="flex items-center gap-2 bg-card border border-primary/30 rounded-2xl p-1 shadow-xs">
+                                      <label className="text-[11px] font-black text-primary px-2 flex items-center gap-1">
+                                        <Edit2 className="w-3 h-3" />
+                                        <span>{t('تعديل المرحلة:')}</span>
+                                      </label>
+                                      <select
+                                        value={selectedProject.currentPhase || 'auto'}
+                                        onChange={(e) => handleUpdateCurrentPhase(selectedProject.id, e.target.value)}
+                                        disabled={isUpdatingPhases}
+                                        className="bg-background text-foreground border border-border text-xs font-black rounded-xl px-3 py-1.5 outline-none focus:ring-2 focus:ring-primary cursor-pointer disabled:opacity-50"
+                                      >
+                                        <option value="auto">{t('🔄 تلقائي (وفق المهام)')}</option>
+                                        {selectedProject.phases?.map(p => (
+                                          <option key={p} value={p}>📍 {p} {p === currentActivePhase ? "(" + t("النشطة") + ")" : ""}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </div>
 
                             {selectedProjectPhaseDetails && (
-                              <div className="flex items-center gap-4 text-xs font-bold text-muted-foreground self-end sm:self-center">
+                              <div className="flex items-center gap-4 text-xs font-bold text-muted-foreground self-end sm:self-center flex-wrap">
                                 <div className="text-left sm:text-right">
                                   <span className="text-sm font-black text-foreground block">
                                     {selectedProjectPhaseDetails.overallProgress}% {t('نسبة إنجاز المشروع')}
@@ -1590,20 +1641,41 @@ export const Operations: React.FC = () => {
 
                           {/* Phase Pipeline Step Visualizer */}
                           {selectedProjectPhaseDetails && (
-                            <div className="pt-4 border-t border-primary/10">
+                            <div className="pt-4 border-t border-primary/10 space-y-2">
+                              <div className="flex items-center justify-between text-[11px] font-black text-muted-foreground">
+                                <span>{t('مخطط المراحل الزمني والتقدم:')}</span>
+                                {(canEditPhases || isPM) && (
+                                  <span className="text-[10px] text-primary font-bold">
+                                    {t('💡 يمكنك النقر على أي مرحلة لتعيينها كمرحلة حالية نشطة')}
+                                  </span>
+                                )}
+                              </div>
                               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
                                 {selectedProjectPhaseDetails.phaseStats.map((stat, idx) => {
                                   const isCurrent = stat.phase === currentActivePhase;
                                   return (
                                     <div 
                                       key={stat.phase}
+                                      onClick={() => {
+                                        if (canEditPhases || isPM) {
+                                          handleUpdateCurrentPhase(selectedProject.id, stat.phase);
+                                        }
+                                      }}
+                                      title={
+                                        (canEditPhases || isPM)
+                                          ? isCurrent
+                                            ? t('هذه هي المرحلة الحالية النشطة للمشروع')
+                                            : `${t('اضغط لتعيين مرحلة')} "${stat.phase}" ${t('كمرحلة حالية نشطة')}`
+                                          : stat.phase
+                                      }
                                       className={cn(
-                                        "p-3 rounded-2xl border text-right transition-all flex flex-col justify-between min-h-[72px]",
+                                        "p-3 rounded-2xl border text-right transition-all flex flex-col justify-between min-h-[78px] group",
+                                        (canEditPhases || isPM) ? "cursor-pointer hover:scale-[1.02] hover:shadow-md" : "",
                                         isCurrent 
                                           ? "bg-primary text-primary-foreground border-primary shadow-md ring-2 ring-primary/30" 
                                           : stat.isCompleted
-                                          ? "bg-card border-emerald-500/30 text-foreground"
-                                          : "bg-muted/40 border-border text-muted-foreground"
+                                          ? "bg-card border-emerald-500/30 text-foreground hover:border-primary/50"
+                                          : "bg-muted/40 border-border text-muted-foreground hover:border-primary/50"
                                       )}
                                     >
                                       <div className="flex items-center justify-between text-[10px] font-black mb-1">
@@ -1620,9 +1692,20 @@ export const Operations: React.FC = () => {
                                         <p className={cn("text-xs font-black truncate", isCurrent ? "text-white" : "text-foreground")}>
                                           {stat.phase}
                                         </p>
-                                        <p className={cn("text-[9px] font-bold mt-0.5", isCurrent ? "text-white/80" : "text-muted-foreground")}>
-                                          {stat.completedTasks}/{stat.totalTasks} {t('مهمة')}
-                                        </p>
+                                        <div className="flex items-center justify-between mt-0.5">
+                                          <p className={cn("text-[9px] font-bold", isCurrent ? "text-white/80" : "text-muted-foreground")}>
+                                            {stat.completedTasks}/{stat.totalTasks} {t('مهمة')}
+                                          </p>
+                                          {isCurrent ? (
+                                            <span className="text-[8px] font-black bg-white/20 text-white px-1.5 py-0.5 rounded-sm">
+                                              {t('نشطة')}
+                                            </span>
+                                          ) : (canEditPhases || isPM) ? (
+                                            <span className="text-[8px] font-bold text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                                              {t('تعيين')} ➔
+                                            </span>
+                                          ) : null}
+                                        </div>
                                       </div>
                                     </div>
                                   );
@@ -1706,14 +1789,28 @@ export const Operations: React.FC = () => {
                                 <Milestone className="w-3.5 h-3.5 text-primary" />
                                 {t('المرحلة الحالية للمشروع')}
                               </p>
-                              <div className="flex items-center gap-1.5 mt-0.5">
-                                <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-xl text-xs font-black border border-primary/20 tracking-wide inline-flex items-center gap-1">
-                                  <Activity className="w-3 h-3 text-primary animate-pulse" />
-                                  {currentActivePhase}
-                                </span>
-                              </div>
-                              <p className="text-[9px] text-muted-foreground/80 font-bold mt-0.5">
-                                Current Project Phase
+                              {(canEditPhases || isPM) ? (
+                                <select 
+                                  className="bg-transparent text-foreground font-black text-xs outline-none cursor-pointer p-0 w-full mt-0.5 border-b border-primary/30 pb-0.5 focus:border-primary"
+                                  value={selectedProject.currentPhase || 'auto'}
+                                  onChange={(e) => handleUpdateCurrentPhase(selectedProject.id, e.target.value)}
+                                  disabled={isUpdatingPhases}
+                                >
+                                  <option value="auto" className="bg-card">{t('🔄 تلقائي (حسب المهام)')}</option>
+                                  {selectedProject.phases?.map(p => (
+                                    <option key={p} value={p} className="bg-card">📍 {p}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-xl text-xs font-black border border-primary/20 tracking-wide inline-flex items-center gap-1">
+                                    <Activity className="w-3 h-3 text-primary animate-pulse" />
+                                    {currentActivePhase}
+                                  </span>
+                                </div>
+                              )}
+                              <p className="text-[9px] text-muted-foreground/80 font-bold mt-1">
+                                {selectedProject.currentPhase ? t('محددة يدوياً') : t('تلقائي ديناميكي')}
                               </p>
                             </div>
 
@@ -2150,6 +2247,36 @@ export const Operations: React.FC = () => {
                  <button onClick={() => setIsPhaseModalOpen(false)} className="p-2 hover:bg-muted rounded-full transition-colors cursor-pointer"><X className="w-5 h-5"/></button>
                </div>
 
+               {/* Current Active Phase Controller */}
+               <div className="bg-primary/5 p-4 rounded-2xl border border-primary/20 space-y-2">
+                 <div className="flex items-center justify-between">
+                   <label className="text-xs font-black text-foreground flex items-center gap-2">
+                     <Milestone className="w-4 h-4 text-primary" />
+                     <span>{t('المرحلة الحالية النشطة للمشروع:')}</span>
+                   </label>
+                   <span className="text-[11px] font-black px-2.5 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-full border border-emerald-500/20 flex items-center gap-1">
+                     <Activity className="w-3 h-3 text-emerald-500 animate-pulse" />
+                     {currentActivePhase}
+                   </span>
+                 </div>
+                 <div className="flex gap-2 items-center">
+                   <select
+                     value={selectedProject.currentPhase || 'auto'}
+                     onChange={(e) => handleUpdateCurrentPhase(selectedProject.id, e.target.value)}
+                     disabled={isUpdatingPhases}
+                     className="flex-1 px-4 py-2.5 bg-background text-foreground border border-border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary cursor-pointer disabled:opacity-50"
+                   >
+                     <option value="auto">{t('🔄 تلقائي (تحديد آلي بناءً على تقدم وحالة المهام)')}</option>
+                     {selectedProject.phases?.map(p => (
+                       <option key={p} value={p}>📍 {p} {p === currentActivePhase ? "(" + t("النشطة حالياً") + ")" : ""}</option>
+                     ))}
+                   </select>
+                 </div>
+                 <p className="text-[10px] text-muted-foreground font-medium">
+                   {t('يمكنك اختيار مرحلة معينة وتثبيتها يدوياً لتكون هي المرحلة النشطة، أو تركها على "تلقائي".')}
+                 </p>
+               </div>
+
                {/* Add new phase input */}
                <div className="bg-muted/40 p-4 rounded-xl border border-border space-y-2">
                  <label className="text-xs font-black text-foreground block">{t('إضافة مرحلة جديدة:')}</label>
@@ -2183,6 +2310,7 @@ export const Operations: React.FC = () => {
                    selectedProject.phases.map((phaseName) => {
                      const isEditingThis = editingPhaseOldName === phaseName;
                      const phaseTaskCount = projectSpecificTasks.filter(t => t.phase === phaseName && !t.parentTaskId).length;
+                     const isPhaseActive = phaseName === currentActivePhase;
 
                      return (
                        <div key={phaseName} className="p-3 bg-muted/20 border border-border rounded-xl flex items-center justify-between gap-3">
@@ -2224,7 +2352,25 @@ export const Operations: React.FC = () => {
                                </span>
                              </div>
 
-                             <div className="flex items-center gap-1">
+                             <div className="flex items-center gap-1.5">
+                               {isPhaseActive ? (
+                                 <span className="px-2.5 py-1 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 rounded-lg text-[10px] font-black border border-emerald-500/30 flex items-center gap-1">
+                                   <Check className="w-3 h-3" />
+                                   <span>{t('المرحلة الحالية')}</span>
+                                 </span>
+                               ) : (
+                                 <button
+                                   type="button"
+                                   onClick={() => handleUpdateCurrentPhase(selectedProject.id, phaseName)}
+                                   disabled={isUpdatingPhases}
+                                   className="px-2.5 py-1 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[10px] font-black transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                   title={t('تعيين هذه المرحلة كمرحلة حالية نشطة')}
+                                 >
+                                   <Milestone className="w-3 h-3" />
+                                   <span>{t('تعيين كنشطة')}</span>
+                                 </button>
+                               )}
+
                                <button
                                  type="button"
                                  onClick={() => { setEditingPhaseOldName(phaseName); setEditingPhaseNewName(phaseName); }}
@@ -2342,6 +2488,22 @@ export const Operations: React.FC = () => {
                             </div>
                           ))}
                        </div>
+
+                       {projectForm.phases && projectForm.phases.length > 0 && (
+                         <div className="pt-2">
+                           <label className="text-xs font-black text-muted-foreground block mb-1.5">{t('المرحلة الابتدائية للمشروع:')}</label>
+                           <select
+                             className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary cursor-pointer"
+                             value={projectForm.currentPhase || ''}
+                             onChange={(e) => setProjectForm({ ...projectForm, currentPhase: e.target.value })}
+                           >
+                             <option value="">{t('🔄 تلقائي (حسب أول مرحلة وحالة المهام)')}</option>
+                             {projectForm.phases.map(p => (
+                               <option key={p} value={p}>📍 {p}</option>
+                             ))}
+                           </select>
+                         </div>
+                       )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-6">
