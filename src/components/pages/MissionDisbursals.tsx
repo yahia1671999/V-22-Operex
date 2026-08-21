@@ -674,7 +674,7 @@ export const MissionDisbursals: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-right divide-y divide-slate-100 dark:divide-slate-800">
+            <table className="w-full min-w-[750px] text-right divide-y divide-slate-100 dark:divide-slate-800">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/40 text-slate-400 text-xs font-black uppercase tracking-wider">
                   <th className="px-8 py-5">{t('الموظف')}</th>

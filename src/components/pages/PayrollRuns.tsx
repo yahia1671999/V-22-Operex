@@ -214,8 +214,8 @@ export const PayrollRuns: React.FC = () => {
             <p className="text-xs text-muted-foreground mt-1">{t('تأكد من تفعيل استقطاعات الموظف أو اعتماد نماذج استقطاعات نشطة لتبويب البيانات.')}</p>
           </div>
         ) : (
-          <div className="border border-border bg-card">
-            <table className="w-full text-left rtl:text-right text-xs">
+          <div className="border border-border bg-card overflow-x-auto">
+            <table className="w-full min-w-[650px] text-left rtl:text-right text-xs">
               <thead className="bg-muted text-foreground font-black border-b border-border uppercase tracking-widest font-mono">
                 <tr>
                   <th className="px-6 py-4">{t('الاستقطاع')}</th>
@@ -420,8 +420,8 @@ export const PayrollRuns: React.FC = () => {
                   <button onClick={() => setSelectedRun(null)} className="p-2 hover:bg-muted rounded-none transition-colors"><X className="w-5 h-5 text-muted-foreground" /></button>
                 </div>
               </div>
-              <div className="flex-1 overflow-auto p-8">
-                <table className={cn("w-full", isRtl ? "text-right" : "text-left")}>
+              <div className="flex-1 overflow-auto p-4 sm:p-8">
+                <table className={cn("w-full min-w-[550px]", isRtl ? "text-right" : "text-left")}>
                   <thead className="sticky top-0 bg-card z-10">
                     <tr className="border-b border-border">
                       <th className="pb-4 text-sm font-black text-muted-foreground uppercase tracking-widest">{t('common.name')}</th>

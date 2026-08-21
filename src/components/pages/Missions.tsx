@@ -579,7 +579,8 @@ export const Missions: React.FC = () => {
           </div>
 
           <div className="bg-card rounded-none border-2 border-border/80 overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,0.05)]">
-            <table className="w-full text-right">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[850px] text-right">
               <thead>
                 <tr className="bg-muted/80 border-b-2 border-border/60 text-xs font-black text-muted-foreground uppercase tracking-widest">
                   <th className="px-8 py-6">{t('الموظف المعني')}</th>
@@ -782,6 +783,7 @@ export const Missions: React.FC = () => {
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       )}
 

@@ -158,8 +158,8 @@ export const CompleteTaskModal: React.FC<CompleteTaskModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-background/80 backdrop-blur-md overflow-hidden animate-in fade-in duration-200">
-      <div className="bg-card border-2 border-emerald-500 w-full max-w-lg max-h-[90vh] flex flex-col shadow-2xl relative text-right rounded-2xl overflow-hidden" dir="rtl">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
+      <div className="bg-card border-2 border-emerald-500 w-full max-w-lg max-h-[90vh] flex flex-col shadow-2xl relative text-right rounded-2xl overflow-hidden my-auto" dir="rtl">
         {/* Header */}
         <div className="p-6 pb-4 border-b border-border flex items-start justify-between gap-3 relative shrink-0">
           <div className="flex items-start gap-3">

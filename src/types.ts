@@ -267,6 +267,7 @@ export interface Project {
   consultantTlId?: string;   // قائد فريق الاستشاريين
   developerTlId?: string;    // قائد فريق المطورين
   phases: string[];          // المراحل الديناميكية (e.g. ['Analysis', 'Design', ...])
+  currentPhase?: string;     // المرحلة الحالية النشطة
   scope?: ProjectScope[];    // نطاق المشروع (شرائح)
   visitFollowUps?: ProjectVisit[]; // كروت متابعة الزيارات
   startDate?: string;
@@ -506,6 +507,11 @@ export interface Penalty {
   grievanceReply?: string;
   grievanceReplyDate?: string;
   grievanceResolvedBy?: string;
+  grievanceWindowDays?: number; // مهلة تقديم التظلم بالأيام
+  visibilityDurationDays?: number; // مدة ظهور الجزاء للموظف بالأيام
+  grievanceStartDate?: string; // تاريخ بداية التظلم
+  grievanceDeadlineDate?: string; // آخر موعد لتقديم التظلم
+  visibilityEndDate?: string; // تاريخ انتهاء ظهور الجزاء للموظف
 
   // Before Grievance Snapshot (تسجيل الجزاء قبل التظلم)
   preGrievancePenaltyType?: string;

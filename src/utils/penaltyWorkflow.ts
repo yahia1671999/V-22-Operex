@@ -180,3 +180,105 @@ export function checkPenaltyUserRole(
     canActAsHR,
   };
 }
+
+/**
+ * Calculates a future date in YYYY-MM-DD format by adding days to a start date.
+ */
+export function calculateFutureDate(startDateStr?: string, daysToAdd: number = 0): string {
+  if (!startDateStr) {
+    const d = new Date();
+    d.setDate(d.getDate() + Number(daysToAdd));
+    return d.toISOString().split('T')[0];
+  }
+  const date = new Date(startDateStr);
+  if (isNaN(date.getTime())) {
+    const d = new Date();
+    d.setDate(d.getDate() + Number(daysToAdd));
+    return d.toISOString().split('T')[0];
+  }
+  date.setDate(date.getDate() + Number(daysToAdd));
+  return date.toISOString().split('T')[0];
+}
+
+export interface GrievanceStatusInfo {
+  status: 'submitted' | 'available' | 'expired';
+  label: string;
+  isAvailable: boolean;
+  isExpired: boolean;
+  isVisibilityExpired: boolean;
+  canSubmit: boolean;
+  gStartDate: string;
+  gDeadline: string;
+  vEndDate: string;
+  gWinDays: number;
+  vDurDays: number;
+  remainingGrievanceDays: number;
+  remainingVisibilityDays: number;
+}
+
+/**
+ * Analyzes grievance window and visibility period for a penalty.
+ */
+export function getGrievanceStatusInfo(penalty: any): GrievanceStatusInfo {
+  const today = new Date().toISOString().split('T')[0];
+  const gStartDate = penalty?.grievanceStartDate || penalty?.penaltyDate || penalty?.violationDate || today;
+  const gWinDays = Number(penalty?.grievanceWindowDays) > 0 ? Number(penalty.grievanceWindowDays) : 7;
+  const vDurDays = Number(penalty?.visibilityDurationDays) > 0 ? Number(penalty.visibilityDurationDays) : 30;
+
+  const gDeadline = penalty?.grievanceDeadlineDate || calculateFutureDate(gStartDate, gWinDays);
+  const vEndDate = penalty?.visibilityEndDate || calculateFutureDate(gStartDate, vDurDays);
+
+  const todayTime = new Date(today).getTime();
+  const deadlineTime = new Date(gDeadline).getTime();
+  const visibilityEndTime = new Date(vEndDate).getTime();
+
+  const remainingGrievanceDays = Math.ceil((deadlineTime - todayTime) / (1000 * 60 * 60 * 24));
+  const remainingVisibilityDays = Math.ceil((visibilityEndTime - todayTime) / (1000 * 60 * 60 * 24));
+
+  const isExpired = today > gDeadline;
+  const isVisibilityExpired = today > vEndDate;
+
+  if (penalty?.hasGrievance) {
+    const replyLabel =
+      penalty.grievanceStatus === 'Pending'
+        ? 'تم تقديم التظلم (قيد دراسة HR)'
+        : penalty.grievanceStatus === 'Accepted_Modified'
+        ? 'تم قبول التظلم وتعديل الجزاء'
+        : 'تم رفض التظلم من HR';
+
+    return {
+      status: 'submitted',
+      label: replyLabel,
+      isAvailable: false,
+      isExpired: false,
+      isVisibilityExpired,
+      canSubmit: false,
+      gStartDate,
+      gDeadline,
+      vEndDate,
+      gWinDays,
+      vDurDays,
+      remainingGrievanceDays: 0,
+      remainingVisibilityDays: Math.max(0, remainingVisibilityDays),
+    };
+  }
+
+  const isCancelled = penalty?.status === 'Cancelled' || penalty?.status === 'تم إلغاء الجزاء';
+
+  return {
+    status: isExpired ? 'expired' : 'available',
+    label: isExpired ? 'منتهي' : 'متاح',
+    isAvailable: !isExpired && !isCancelled,
+    isExpired,
+    isVisibilityExpired,
+    canSubmit: !isExpired && !isCancelled,
+    gStartDate,
+    gDeadline,
+    vEndDate,
+    gWinDays,
+    vDurDays,
+    remainingGrievanceDays: Math.max(0, remainingGrievanceDays),
+    remainingVisibilityDays: Math.max(0, remainingVisibilityDays),
+  };
+}
+

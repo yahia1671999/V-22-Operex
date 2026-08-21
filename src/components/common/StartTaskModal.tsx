@@ -134,8 +134,8 @@ export const StartTaskModal: React.FC<StartTaskModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-background/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-card border-2 border-primary w-full max-w-lg p-6 space-y-5 shadow-2xl relative text-right rounded-2xl" dir="rtl">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-background/80 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
+      <div className="bg-card border-2 border-primary w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 sm:p-6 space-y-5 shadow-2xl relative text-right rounded-2xl" dir="rtl">
         {/* Close Button */}
         <button 
           onClick={onClose} 

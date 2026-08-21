@@ -253,9 +253,9 @@ export const NoticeDisplayModal: React.FC<NoticeDisplayModalProps> = ({
           </div>
 
           {/* Modal Body: Two Columns on Large Screens */}
-          <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-12 divide-y md:divide-y-0 md:divide-x md:divide-x-reverse divide-border">
+          <div className="flex-1 overflow-y-auto md:overflow-hidden grid grid-cols-1 md:grid-cols-12 divide-y md:divide-y-0 md:divide-x md:divide-x-reverse divide-border">
             {/* Column 1: List & Search (4 or 5 cols) */}
-            <div className="md:col-span-5 flex flex-col bg-muted/20 max-h-[400px] md:max-h-[600px] overflow-hidden border-b md:border-b-0 border-border">
+            <div className="md:col-span-5 flex flex-col bg-muted/20 max-h-[300px] md:max-h-[600px] overflow-hidden border-b md:border-b-0 border-border shrink-0">
               {/* Search & Tabs */}
               <div className="p-3 border-b-2 border-border space-y-2 bg-card">
                 <div className="relative">

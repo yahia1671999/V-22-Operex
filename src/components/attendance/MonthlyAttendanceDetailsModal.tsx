@@ -40,6 +40,7 @@ import {
   MonthlyDayAttendanceDetail,
   calculateEmployeeMonthlyAttendance
 } from '../../utils/monthlyAttendanceCalculation';
+import { MonthlyJobCardPrintable } from '../payroll/MonthlyJobCardPrintable';
 
 export type { MonthlyDayAttendanceDetail };
 
@@ -76,6 +77,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
 
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [printFormat, setPrintFormat] = useState<'job-card-landscape' | 'portrait-report'>('job-card-landscape');
 
   const orgName = systemSettings?.organizationName || (isRtl ? 'شركة الأفق الرقمي للتجارة والتقنية' : 'Paradise Solutions');
   const logoUrl = systemSettings?.logoUrl || '';
@@ -152,6 +154,10 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
 
   const monthlyDays = calculationResult.days;
   const stats = calculationResult.stats;
+
+  const shiftName = shift 
+    ? `${shift.name} (${shift.startTime} - ${shift.endTime})` 
+    : (stats.shiftName || (isRtl ? 'الوردية الصباحية المعتمدة' : 'Standard Shift'));
 
   // Filtered rows for display
   const filteredDays = useMemo(() => {
@@ -231,9 +237,20 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
     document.body.removeChild(link);
   };
 
-  // Trigger Print
-  const handlePrint = () => {
-    window.print();
+  // Trigger Print for Monthly Job Card (A4 Landscape - صفحة واحدة)
+  const handlePrintJobCard = () => {
+    setPrintFormat('job-card-landscape');
+    setTimeout(() => {
+      window.print();
+    }, 60);
+  };
+
+  // Trigger Print for Full Monthly Attendance Report (A4 Portrait)
+  const handlePrintFullReport = () => {
+    setPrintFormat('portrait-report');
+    setTimeout(() => {
+      window.print();
+    }, 60);
   };
 
   if (!isOpen || !employee) return null;
@@ -296,15 +313,29 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
               <Download className="w-4 h-4 text-emerald-600" />
               <span>{t('تصدير Excel')}</span>
             </button>
+
+            {/* زر طباعة كارت العمل الشهري (A4 Landscape - صفحة واحدة) */}
             <button
               type="button"
-              onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black text-white bg-slate-900 hover:bg-slate-800 dark:bg-primary dark:hover:bg-primary/90 border border-slate-900 dark:border-primary rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
-              title={t('طباعة التقرير')}
+              onClick={handlePrintJobCard}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black text-white bg-teal-700 hover:bg-teal-800 border border-teal-700 rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
+              title={t('طباعة كارت العمل الشهري (A4 Landscape - صفحة واحدة)')}
             >
-              <Printer className="w-4 h-4 text-emerald-400 dark:text-white" />
+              <Printer className="w-4 h-4 text-teal-200" />
+              <span>{t('طباعة كارت العمل')}</span>
+            </button>
+
+            {/* زر طباعة تقرير الحضور الكامل (A4 Portrait) */}
+            <button
+              type="button"
+              onClick={handlePrintFullReport}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black text-white bg-slate-900 hover:bg-slate-800 dark:bg-primary dark:hover:bg-primary/90 border border-slate-900 dark:border-primary rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
+              title={t('طباعة التقرير الشامل')}
+            >
+              <Printer className="w-4 h-4 text-slate-300 dark:text-white" />
               <span>{t('طباعة التقرير')}</span>
             </button>
+
             <button
               type="button"
               onClick={onClose}
@@ -720,13 +751,26 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
       </div>
 
       {/* =========================================================================
-          OFFICIAL PRINTABLE A4 PORTRAIT DOCUMENT (Shown strictly when printing)
+          OFFICIAL PRINTABLE DOCUMENTS
           ========================================================================= */}
-      <div 
-        id="monthly-attendance-printable-document"
-        className="hidden print:block print:w-full bg-white text-slate-900 p-0 m-0 font-sans"
-        dir={isRtl ? 'rtl' : 'ltr'}
-      >
+      {printFormat === 'job-card-landscape' ? (
+        <MonthlyJobCardPrintable
+          employee={employee}
+          month={month}
+          days={monthlyDays}
+          stats={stats}
+          orgName={orgName}
+          logoUrl={logoUrl}
+          departmentName={departmentName}
+          shiftName={shiftName}
+          isRtl={isRtl}
+        />
+      ) : (
+        <div 
+          id="monthly-attendance-printable-document"
+          className="hidden print:block print:w-full bg-white text-slate-900 p-0 m-0 font-sans"
+          dir={isRtl ? 'rtl' : 'ltr'}
+        >
         {/* Print Stylesheet overrides for strict A4 portrait fit */}
         <style dangerouslySetInnerHTML={{ __html: `
           @media print {
@@ -1080,6 +1124,7 @@ export const MonthlyAttendanceDetailsModal: React.FC<MonthlyAttendanceDetailsMod
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };

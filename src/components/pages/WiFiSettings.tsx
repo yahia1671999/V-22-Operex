@@ -300,7 +300,7 @@ export const WiFiSettings: React.FC = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-right border-collapse">
+          <table className="w-full min-w-[700px] text-right border-collapse">
             <thead>
               <tr className="bg-muted/50 border-b border-border">
                 <th className="px-6 py-4 text-xs font-black text-muted-foreground uppercase tracking-widest">{t('الموقع / الشبكة')}</th>

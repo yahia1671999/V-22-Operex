@@ -1928,7 +1928,7 @@ export const TimeManagement: React.FC = () => {
 
                         {/* Tasks Table for This Day */}
                         <div className="overflow-x-auto">
-                          <table className="w-full text-right text-xs border-collapse">
+                          <table className="w-full min-w-[700px] text-right text-xs border-collapse">
                             <thead>
                               <tr className="bg-muted/40 text-muted-foreground border-b border-border font-black text-[11px]">
                                 <th className="p-3">المهمة والمشروع</th>

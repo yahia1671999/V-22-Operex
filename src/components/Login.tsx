@@ -392,7 +392,7 @@ export const Login: React.FC = () => {
               initial={{ scale: 0.95, y: 15 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 15 }}
-              className="w-full max-w-[420px] bg-[#0c1324]/90 backdrop-blur-2xl rounded-3xl shadow-3xl p-8 border border-white/12"
+              className="w-full max-w-[420px] max-h-[90vh] overflow-y-auto bg-[#0c1324]/90 backdrop-blur-2xl rounded-3xl shadow-3xl p-6 sm:p-8 border border-white/12"
             >
               <div className="flex items-center gap-3.5 mb-4 text-[#D6C73A]">
                 <AlertCircle className="w-7 h-7 shrink-0 stroke-[2]" />

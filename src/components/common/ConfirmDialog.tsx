@@ -39,7 +39,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative bg-card w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-border overflow-y-auto"
+            className="relative bg-card w-full max-w-md max-h-[90vh] rounded-[2.5rem] shadow-2xl overflow-hidden border border-border overflow-y-auto"
           >
             <div className="p-8 text-center">
               <div className={cn(

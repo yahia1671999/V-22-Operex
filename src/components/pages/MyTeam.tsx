@@ -19,7 +19,7 @@ import { MissionEvaluationModal } from '../common/MissionEvaluationModal';
 import { TaskDetailsModal } from '../common/TaskDetailsModal';
 import { WeeklySchedulePdfModal } from './WeeklySchedulePdfModal';
 import { TeamPerformanceTab } from './TeamPerformanceTab';
-import { getTaskAssignedIds, getTaskCompletionDate, calculateTaskDelay, TaskDelayInfo, toLocalDateStr } from '../../lib/taskUtils';
+import { getTaskAssignedIds, getTaskCompletionDate, calculateTaskDelay, TaskDelayInfo, toLocalDateStr, normalizeTaskAssigneeIds, findEmployeeByIdentifier } from '../../lib/taskUtils';
 import { formatTime12h, formatDateTime12h } from '../../utils/timeFormatter';
 
 interface MyTeamProps {
@@ -1629,10 +1629,8 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
 
     setIsSubmittingTask(true);
     try {
-      const targetEmp = employees.find(emp => emp.id === newTaskTargetEmpId || emp.employeeId === newTaskTargetEmpId);
-      const targetEmpAllIds = targetEmp
-        ? Array.from(new Set([targetEmp.id, targetEmp.employeeId, targetEmp.userId, targetEmp.email, targetEmp.name].filter(Boolean)))
-        : [newTaskTargetEmpId];
+      const targetEmp = findEmployeeByIdentifier(newTaskTargetEmpId, employees);
+      const targetEmpIds = normalizeTaskAssigneeIds([targetEmp?.id, targetEmp?.employeeId, newTaskTargetEmpId], employees);
       const taskId = `task_${Date.now()}`;
       
       const res = await fetch('/api/project-tasks', {
@@ -1649,9 +1647,9 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
           parentTaskId: newTaskParentTaskId || null,
           phase: newTaskPhase || null,
           subPhase: newTaskScope || 'General',
-          assignedToId: targetEmp?.id || newTaskTargetEmpId,
+          assignedToId: targetEmp?.id || targetEmp?.employeeId || newTaskTargetEmpId,
           assignedTo: targetEmp?.name || 'عضو بالفريق',
-          assignedToIds: JSON.stringify(targetEmpAllIds),
+          assignedToIds: JSON.stringify(targetEmpIds),
           priority: newTaskPriority,
           startDate: newTaskStartDate || todayStr,
           endDate: newTaskDueDate || todayStr,

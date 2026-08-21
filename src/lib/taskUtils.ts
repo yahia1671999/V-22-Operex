@@ -77,12 +77,29 @@ export function isOpenTask(taskOrStatus?: ProjectTask | string | null): boolean 
 }
 
 /**
+ * Resolves a single identifier (id, employeeId, userId, email, name) to an Employee object
+ */
+export function findEmployeeByIdentifier(identifier: string | null | undefined, employees: Employee[] = []): Employee | undefined {
+  if (!identifier || !employees || employees.length === 0) return undefined;
+  const idLower = String(identifier).trim().toLowerCase();
+  if (!idLower) return undefined;
+
+  return employees.find(e => 
+    String(e.id || '').toLowerCase() === idLower ||
+    String(e.employeeId || '').toLowerCase() === idLower ||
+    (e.userId && String(e.userId).toLowerCase() === idLower) ||
+    (e.email && String(e.email).trim().toLowerCase() === idLower) ||
+    (e.name && String(e.name).trim().toLowerCase() === idLower)
+  );
+}
+
+/**
  * Extracts and normalizes assigned employee IDs array from a task (handles string, JSON string, array, single id)
  */
 export function getTaskAssignedIds(taskOrIds: any): string[] {
   if (!taskOrIds) return [];
   if (Array.isArray(taskOrIds)) {
-    return taskOrIds.map(id => String(id).trim()).filter(Boolean);
+    return Array.from(new Set(taskOrIds.map(id => String(id).trim()).filter(Boolean)));
   }
 
   const rawIds = taskOrIds.assignedToIds;
@@ -112,39 +129,135 @@ export function getTaskAssignedIds(taskOrIds: any): string[] {
   return Array.from(new Set(result));
 }
 
+export interface TaskAssigneeInfo {
+  id: string;
+  name: string;
+  employee?: Employee;
+  employeeId?: string;
+  jobTitle?: string;
+  department?: string;
+}
+
 /**
- * Resolves the full assigned employee name(s) for a given task
+ * Resolves all distinct assignees for a given task, guaranteeing that:
+ * 1. Each employee appears exactly ONCE (no duplicate names, no duplicate badges)
+ * 2. Multi-assigned tasks correctly list distinct employees
  */
-export function getAssignedEmployeeName(task: ProjectTask, employees: Employee[]): string {
-  if (!task) return 'غير موجه';
+export function getTaskDistinctAssignees(
+  task: any, 
+  employees: Employee[] = []
+): TaskAssigneeInfo[] {
+  if (!task) return [];
 
-  const ids = getTaskAssignedIds(task);
+  const rawIds = getTaskAssignedIds(task);
+  const seenEmployeeKeys = new Set<string>();
+  const seenNames = new Set<string>();
+  const result: TaskAssigneeInfo[] = [];
 
-  if (ids.length > 0) {
-    const matchedNames: string[] = [];
-    ids.forEach(id => {
-      const idLower = id.toLowerCase();
-      const emp = employees.find(e => 
-        String(e.id).toLowerCase() === idLower ||
-        String(e.employeeId).toLowerCase() === idLower ||
-        (e.userId && String(e.userId).toLowerCase() === idLower) ||
-        (e.email && String(e.email).trim().toLowerCase() === idLower) ||
-        (e.name && String(e.name).trim().toLowerCase() === idLower)
-      );
-      if (emp) {
-        if (!matchedNames.includes(emp.name)) matchedNames.push(emp.name);
-      } else if (task.assignedTo && !matchedNames.includes(task.assignedTo)) {
-        matchedNames.push(task.assignedTo);
-      } else if (!matchedNames.includes(id)) {
-        matchedNames.push(id);
-      }
-    });
-    if (matchedNames.length > 0) {
-      return matchedNames.join(', ');
+  const tryAdd = (empOrId: string | Employee | null | undefined) => {
+    if (!empOrId) return;
+
+    let matchedEmp: Employee | undefined;
+    let fallbackId = '';
+
+    if (typeof empOrId === 'object') {
+      matchedEmp = empOrId as Employee;
+    } else {
+      fallbackId = String(empOrId).trim();
+      matchedEmp = findEmployeeByIdentifier(fallbackId, employees);
     }
+
+    if (matchedEmp) {
+      const canonicalKey = String(matchedEmp.id || matchedEmp.employeeId || matchedEmp.name).toLowerCase();
+      const nameKey = String(matchedEmp.name || '').trim().toLowerCase();
+      
+      if (!seenEmployeeKeys.has(canonicalKey) && (!nameKey || !seenNames.has(nameKey))) {
+        seenEmployeeKeys.add(canonicalKey);
+        if (nameKey) seenNames.add(nameKey);
+        result.push({
+          id: matchedEmp.id || matchedEmp.employeeId || fallbackId,
+          name: matchedEmp.name || fallbackId,
+          employee: matchedEmp,
+          employeeId: matchedEmp.employeeId,
+          jobTitle: (matchedEmp as any).jobTitle || (matchedEmp as any).position,
+          department: (matchedEmp as any).department || (matchedEmp as any).departmentName
+        });
+      }
+    } else if (fallbackId) {
+      const fallbackLower = fallbackId.toLowerCase();
+      if (!seenEmployeeKeys.has(fallbackLower) && !seenNames.has(fallbackLower)) {
+        seenEmployeeKeys.add(fallbackLower);
+        seenNames.add(fallbackLower);
+        result.push({
+          id: fallbackId,
+          name: fallbackId
+        });
+      }
+    }
+  };
+
+  // 1. Process all IDs in rawIds
+  rawIds.forEach(id => tryAdd(id));
+
+  // 2. If nothing matched yet, check single fields
+  if (result.length === 0) {
+    if (task.assignedToId) tryAdd(task.assignedToId);
+    if (task.assignedTo) tryAdd(task.assignedTo);
   }
 
-  if (task.assignedTo) return task.assignedTo;
+  return result;
+}
+
+/**
+ * Normalizes an array of employee IDs to unique canonical IDs (one ID per distinct employee)
+ * Prevents creating duplicate assignments for the same employeeId.
+ */
+export function normalizeTaskAssigneeIds(
+  assigneeIds: (string | null | undefined)[], 
+  employees: Employee[] = []
+): string[] {
+  if (!assigneeIds || !Array.isArray(assigneeIds)) return [];
+
+  const seenCanonical = new Set<string>();
+  const cleanList: string[] = [];
+
+  assigneeIds.filter(Boolean).forEach(rawId => {
+    const trimmed = String(rawId).trim();
+    if (!trimmed) return;
+
+    const emp = findEmployeeByIdentifier(trimmed, employees);
+    if (emp) {
+      const canonicalKey = String(emp.id || emp.employeeId || emp.name).toLowerCase();
+      if (!seenCanonical.has(canonicalKey)) {
+        seenCanonical.add(canonicalKey);
+        cleanList.push(emp.id || emp.employeeId || canonicalKey);
+      }
+    } else {
+      const lower = trimmed.toLowerCase();
+      if (!seenCanonical.has(lower)) {
+        seenCanonical.add(lower);
+        cleanList.push(trimmed);
+      }
+    }
+  });
+
+  return cleanList;
+}
+
+/**
+ * Resolves the full assigned employee name(s) for a given task, guaranteed unique
+ */
+export function getAssignedEmployeeName(task: ProjectTask, employees: Employee[] = []): string {
+  if (!task) return 'غير موجه';
+
+  const distinctAssignees = getTaskDistinctAssignees(task, employees);
+  if (distinctAssignees.length > 0) {
+    return distinctAssignees.map(a => a.name).join(', ');
+  }
+
+  if (task.assignedTo && typeof task.assignedTo === 'string' && task.assignedTo.trim()) {
+    return task.assignedTo.trim();
+  }
   return 'غير موجه';
 }
 
@@ -616,5 +729,140 @@ export function getTaskExecutionMetrics(task: ProjectTask): TaskExecutionMetrics
     isCompleted: isDone,
     isInProgress,
     isPending
+  };
+}
+
+export interface ProjectPhaseStats {
+  phase: string;
+  totalTasks: number;
+  completedTasks: number;
+  openTasks: number;
+  inProgressTasks: number;
+  isCompleted: boolean;
+  isActive: boolean;
+  progressPercent: number;
+}
+
+export interface ProjectPhaseDetails {
+  currentPhase: string;
+  currentPhaseIndex: number;
+  totalPhases: number;
+  phases: string[];
+  phaseStats: ProjectPhaseStats[];
+  overallProgress: number;
+  isProjectCompleted: boolean;
+}
+
+/**
+ * Dynamically computes the current active phase of a project based on workflow and task states
+ */
+export function getCurrentProjectPhase(
+  project?: { phases?: string[]; status?: string; id?: string } | null,
+  tasks: ProjectTask[] = []
+): string {
+  if (!project) return 'Analysis';
+  
+  const phases = (Array.isArray(project.phases) && project.phases.length > 0)
+    ? project.phases
+    : ['Analysis', 'Design', 'Development', 'Testing', 'UAT', 'Go-Live'];
+
+  if (phases.length === 0) return 'Analysis';
+
+  const projTasks = (project.id ? tasks.filter(t => t.projectId === project.id) : tasks) || [];
+  
+  // If no tasks exist in the project, the current phase is the initial phase
+  if (projTasks.length === 0) {
+    return phases[0];
+  }
+
+  // 1. Check if any phase has tasks actively in-progress / testing / under review
+  for (const phase of phases) {
+    const pTasks = projTasks.filter(t => t.phase === phase);
+    const hasActiveTask = pTasks.some(t => 
+      t.status === 'In Progress' || t.status === 'Under Review' || t.status === 'Testing'
+    );
+    if (hasActiveTask) {
+      return phase;
+    }
+  }
+
+  // 2. Step through phases sequentially
+  for (let i = 0; i < phases.length; i++) {
+    const phase = phases[i];
+    const pTasks = projTasks.filter(t => t.phase === phase);
+    
+    if (pTasks.length > 0) {
+      const allDone = pTasks.every(t => !isOpenTask(t));
+      if (!allDone) {
+        // This phase still has open/pending tasks
+        return phase;
+      }
+      // If all tasks in this phase are done, check the next phase in loop
+    } else {
+      // This phase has no tasks yet, but previous phases are all finished
+      return phase;
+    }
+  }
+
+  // If all phases are completely finished
+  return phases[phases.length - 1];
+}
+
+/**
+ * Returns comprehensive metrics and progress per phase for a project
+ */
+export function getProjectPhaseDetails(
+  project?: { phases?: string[]; status?: string; id?: string; name?: string } | null,
+  tasks: ProjectTask[] = []
+): ProjectPhaseDetails {
+  const currentPhase = getCurrentProjectPhase(project, tasks);
+  const phases = (Array.isArray(project?.phases) && project.phases.length > 0)
+    ? project.phases
+    : ['Analysis', 'Design', 'Development', 'Testing', 'UAT', 'Go-Live'];
+
+  const projTasks = (project?.id ? tasks.filter(t => t.projectId === project.id) : tasks) || [];
+  const currentPhaseIndex = Math.max(0, phases.indexOf(currentPhase));
+
+  let totalAllTasks = projTasks.length;
+  let totalCompletedTasks = 0;
+
+  const phaseStats: ProjectPhaseStats[] = phases.map((phase, idx) => {
+    const pTasks = projTasks.filter(t => t.phase === phase);
+    const total = pTasks.length;
+    const completed = pTasks.filter(t => !isOpenTask(t)).length;
+    const open = pTasks.filter(t => isOpenTask(t)).length;
+    const inProgress = pTasks.filter(t => t.status === 'In Progress' || t.status === 'Under Review' || t.status === 'Testing').length;
+    const isCompleted = total > 0 && completed === total;
+    const isActive = phase === currentPhase;
+    const progressPercent = total > 0 ? Math.round((completed / total) * 100) : (idx < currentPhaseIndex ? 100 : 0);
+
+    totalCompletedTasks += completed;
+
+    return {
+      phase,
+      totalTasks: total,
+      completedTasks: completed,
+      openTasks: open,
+      inProgressTasks: inProgress,
+      isCompleted,
+      isActive,
+      progressPercent
+    };
+  });
+
+  const overallProgress = totalAllTasks > 0 
+    ? Math.round((totalCompletedTasks / totalAllTasks) * 100)
+    : (project?.status === 'Completed' ? 100 : Math.round((currentPhaseIndex / Math.max(1, phases.length)) * 100));
+
+  const isProjectCompleted = project?.status === 'Completed' || (totalAllTasks > 0 && totalCompletedTasks === totalAllTasks);
+
+  return {
+    currentPhase,
+    currentPhaseIndex,
+    totalPhases: phases.length,
+    phases,
+    phaseStats,
+    overallProgress,
+    isProjectCompleted
   };
 }

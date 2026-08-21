@@ -25,7 +25,7 @@ import {
   Tag
 } from 'lucide-react';
 import { ProjectTask, Employee } from '../../types';
-import { calculateTaskDelay, getTaskAssignedIds, isOpenTask } from '../../lib/taskUtils';
+import { calculateTaskDelay, getTaskAssignedIds, isOpenTask, getTaskDistinctAssignees, findEmployeeByIdentifier } from '../../lib/taskUtils';
 
 interface TaskDetailsModalProps {
   task: ProjectTask | null;
@@ -52,17 +52,13 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
 
   if (!isOpen || !task) return null;
 
-  // 1. Assigned Employee Information
-  const assignedIds = getTaskAssignedIds(task);
-  const assignedEmpId = assignedIds[0] || task.assignedToId || '';
-  const assignedEmployee = employees.find(e => 
-    e.id === assignedEmpId || 
-    e.employeeId === assignedEmpId || 
-    e.email?.toLowerCase() === assignedEmpId.toLowerCase() ||
-    e.name?.trim().toLowerCase() === (task.assignedTo || '').trim().toLowerCase()
-  );
+  // 1. Assigned Employees Information (Distinct & Deduplicated)
+  const distinctAssignees = getTaskDistinctAssignees(task, employees);
+  const primaryAssignee = distinctAssignees[0];
+  const assignedEmployee = primaryAssignee?.employee;
+  const assignedEmpId = primaryAssignee?.id || task.assignedToId || '';
 
-  const assignedEmpName = assignedEmployee?.name || task.assignedTo || 'غير مسند لموظف';
+  const assignedEmpName = primaryAssignee?.name || task.assignedTo || 'غير مسند لموظف';
   const assignedEmpJob = (assignedEmployee as any)?.jobTitle || (assignedEmployee as any)?.position || 'موظف';
   const assignedEmpDept = (assignedEmployee as any)?.department || (assignedEmployee as any)?.departmentName || 'عام';
   const assignedEmpCode = assignedEmployee?.employeeId || '---';
@@ -345,7 +341,7 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
                     <div className="w-11 h-11 bg-primary/10 text-primary border border-primary/20 rounded-xl flex items-center justify-center font-black text-base shrink-0">
                       {assignedEmpName ? assignedEmpName.charAt(0) : 'U'}
                     </div>
-                    <div className="space-y-1 min-w-0">
+                    <div className="space-y-1 min-w-0 flex-1">
                       <div className="text-sm font-black text-foreground truncate">{assignedEmpName}</div>
                       <div className="text-xs text-muted-foreground font-bold flex items-center gap-2">
                         <span className="bg-muted px-2 py-0.5 rounded text-[10px] font-mono">كود: {assignedEmpCode}</span>
@@ -357,6 +353,20 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
                       </div>
                     </div>
                   </div>
+
+                  {distinctAssignees.length > 1 && (
+                    <div className="pt-2 border-t border-border/60">
+                      <span className="text-[10px] font-black text-muted-foreground block mb-1.5">كل الموظفين المسند إليهم ({distinctAssignees.length}):</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {distinctAssignees.map(a => (
+                          <span key={a.id} className="bg-primary/10 text-primary border border-primary/20 text-xs font-bold px-2 py-0.5 rounded-lg flex items-center gap-1">
+                            <User className="w-3 h-3" />
+                            {a.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Project & Scope Card */}

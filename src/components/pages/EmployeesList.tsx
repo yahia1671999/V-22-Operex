@@ -838,7 +838,7 @@ export const EmployeesList: React.FC = () => {
       {/* Table */}
       <div className="bg-card rounded-none shadow-none border border-border overflow-hidden transition-colors">
         <div className="overflow-x-auto">
-          <table className={cn("w-full", language === 'ar' ? "text-right" : "text-left")}>
+          <table className={cn("w-full min-w-[850px]", language === 'ar' ? "text-right" : "text-left")}>
             <thead>
               <tr className="bg-muted/50 border-b border-border">
                 <th className="px-8 py-5">

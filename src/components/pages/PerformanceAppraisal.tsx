@@ -2150,7 +2150,7 @@ export const PerformanceAppraisal: React.FC<PerformanceAppraisalProps> = ({ isMa
             </div>
 
             <div className="overflow-x-auto text-right">
-              <table className="w-full border-collapse">
+              <table className="w-full min-w-[750px] border-collapse">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-900 border-b border-border text-[10px] text-muted-foreground font-extrabold uppercase">
                     <th className="py-3 px-4 text-center">#</th>

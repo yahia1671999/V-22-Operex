@@ -43,7 +43,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-slate-950 flex items-center justify-center p-6 sm:p-10 overflow-hidden">
+    <div className="fixed inset-0 z-[9999] bg-slate-950 flex items-center justify-center p-4 sm:p-10 overflow-y-auto">
       {/* Background decoration with animated wavy mesh gradient */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none mix-blend-screen opacity-30 filter blur-[100px]">
         <div className="absolute top-[-10%] left-[-10%] w-[45vw] h-[45vw] rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 animate-mesh-1" />
@@ -54,7 +54,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
       <motion.div 
         initial={{ opacity: 0, scale: 0.9, y: 40 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="w-full max-w-lg bg-white/5 dark:bg-slate-900/40 border-2 border-white/10 dark:border-slate-800/50 p-12 md:p-16 rounded-none shadow-[0_60px_120px_-20px_rgba(0,0,0,0.7)] text-center relative overflow-hidden backdrop-blur-3xl"
+        className="w-full max-w-lg max-h-[95vh] overflow-y-auto bg-white/5 dark:bg-slate-900/40 border-2 border-white/10 dark:border-slate-800/50 p-6 sm:p-12 md:p-16 rounded-none shadow-[0_60px_120px_-20px_rgba(0,0,0,0.7)] text-center relative overflow-hidden backdrop-blur-3xl my-auto"
       >
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 via-emerald-500 to-blue-600" />
         

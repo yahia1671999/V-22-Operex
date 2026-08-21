@@ -593,6 +593,11 @@ export const penalties = sqliteTable('penalties', {
   grievanceReply: text('grievance_reply'),
   grievanceReplyDate: text('grievance_reply_date'),
   grievanceResolvedBy: text('grievance_resolved_by'),
+  grievanceWindowDays: integer('grievance_window_days').default(7),
+  visibilityDurationDays: integer('visibility_duration_days').default(30),
+  grievanceStartDate: text('grievance_start_date'),
+  grievanceDeadlineDate: text('grievance_deadline_date'),
+  visibilityEndDate: text('visibility_end_date'),
 
   // Snapshot before grievance
   preGrievancePenaltyType: text('pre_grievance_penalty_type'),

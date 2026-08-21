@@ -28,7 +28,7 @@ import { ProjectTask, TaskStatus, WorkflowLog, TaskChatMessage } from '../../typ
 import { cn } from '../../lib/utils';
 import { ChatInputWithMentions } from '../ChatInputWithMentions';
 import { useLanguage } from '../../contexts/LanguageContext';
-import { getAssignedEmployeeName, isOpenTask, calculateTaskDelay, getTaskExecutionMetrics } from '../../lib/taskUtils';
+import { getAssignedEmployeeName, isOpenTask, calculateTaskDelay, getTaskExecutionMetrics, normalizeTaskAssigneeIds, findEmployeeByIdentifier } from '../../lib/taskUtils';
 import { StartTaskModal } from '../common/StartTaskModal';
 import { CompleteTaskModal } from '../common/CompleteTaskModal';
 
@@ -506,20 +506,9 @@ export const MyTasks: React.FC = () => {
     setIsSubmittingTask(true);
     try {
       const targetEmpId = newTaskForm.assignedToId || (profile?.employeeId || profile?.id || user.uid);
-      const assignedEmp = employees.find(emp => 
-        emp.id === targetEmpId || 
-        emp.employeeId === targetEmpId || 
-        emp.userId === targetEmpId
-      );
-      
-      const allSelectedEmpIds = new Set<string>();
-      if (targetEmpId) allSelectedEmpIds.add(String(targetEmpId).trim().toLowerCase());
-      if (assignedEmp) {
-        if (assignedEmp.id) allSelectedEmpIds.add(String(assignedEmp.id).trim().toLowerCase());
-        if (assignedEmp.employeeId) allSelectedEmpIds.add(String(assignedEmp.employeeId).trim().toLowerCase());
-        if (assignedEmp.userId) allSelectedEmpIds.add(String(assignedEmp.userId).trim().toLowerCase());
-      }
-      const assignedToIds = Array.from(allSelectedEmpIds);
+      const assignedEmp = findEmployeeByIdentifier(targetEmpId, employees);
+      const assignedToIds = normalizeTaskAssigneeIds([targetEmpId, assignedEmp?.id, assignedEmp?.employeeId].filter(Boolean) as string[], employees);
+      const finalAssignedToIds = assignedToIds.length > 0 ? assignedToIds : [String(targetEmpId)];
 
       const targetProjectId = newTaskForm.projectId && newTaskForm.projectId !== 'general_tasks_project' 
         ? newTaskForm.projectId 
@@ -538,8 +527,8 @@ export const MyTasks: React.FC = () => {
         assignedById: user.uid,
         assignedByName: profile?.name || user.displayName || 'User',
         assignedTo: assignedEmp?.name || profile?.name || user.displayName || 'User',
-        assignedToId: targetEmpId,
-        assignedToIds: assignedToIds.length > 0 ? assignedToIds : [String(targetEmpId).toLowerCase()],
+        assignedToId: assignedEmp?.id || assignedEmp?.employeeId || targetEmpId,
+        assignedToIds: finalAssignedToIds,
         parentTaskId: null,
         startDate: newTaskForm.startDate || new Date().toISOString().split('T')[0],
         endDate: newTaskForm.endDate || '',
@@ -604,23 +593,6 @@ export const MyTasks: React.FC = () => {
             <p className="text-gray-500 dark:text-muted-foreground font-medium text-lg">أهلاً {profile?.name}، لديك {stats.pending + stats.inProgress} مهام نشطة اليوم</p>
           </div>
         </div>
-
-        {canAddPersonalTask && (
-          <button
-            type="button"
-            onClick={() => {
-              setNewTaskForm(prev => ({
-                ...prev,
-                assignedToId: profile?.employeeId || profile?.id || user?.uid || ''
-              }));
-              setIsCreateTaskModalOpen(true);
-            }}
-            className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-2xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap self-stretch sm:self-auto justify-center"
-          >
-            <Plus className="w-5 h-5" />
-            <span>{t('إضافة مهمة جديدة')}</span>
-          </button>
-        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

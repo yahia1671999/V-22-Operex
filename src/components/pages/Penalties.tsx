@@ -35,7 +35,7 @@ import { cn, formatCurrency } from "../../lib/utils";
 import { doc, collection } from "../../api";
 import { calculatePayrollDetails } from "../../lib/payrollUtils";
 import { AuditTrailEntry } from "../../types";
-import { getPenaltyManagers, checkPenaltyUserRole } from "../../utils/penaltyWorkflow";
+import { getPenaltyManagers, checkPenaltyUserRole, calculateFutureDate, getGrievanceStatusInfo } from "../../utils/penaltyWorkflow";
 import { sanitizeHtml } from "../../utils/sanitizeHtml";
 import { RichTextEditor } from "../common/RichTextEditor";
 
@@ -945,6 +945,8 @@ export const Penalties: React.FC = () => {
         pen.disciplinary_approval_type ||
         "Approved by Direct Manager",
       referenceNumber: pen.referenceNumber || pen.reference_number || "",
+      grievanceWindowDays: Number(pen.grievanceWindowDays) > 0 ? Number(pen.grievanceWindowDays) : 7,
+      visibilityDurationDays: Number(pen.visibilityDurationDays) > 0 ? Number(pen.visibilityDurationDays) : 30,
     });
     setActiveTab("create");
   };
@@ -965,6 +967,8 @@ export const Penalties: React.FC = () => {
     employeeNotes: "",
     disciplinaryApprovalType: "Approved by Direct Manager",
     referenceNumber: "",
+    grievanceWindowDays: 7,
+    visibilityDurationDays: 30,
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1048,6 +1052,12 @@ export const Penalties: React.FC = () => {
           ? [...existingPen.auditTrail, ...initialAudit]
           : initialAudit;
 
+      const gWinDays = Math.max(1, Number(formData.grievanceWindowDays) || 7);
+      const vDurDays = Math.max(1, Number(formData.visibilityDurationDays) || 30);
+      const grievanceStartDate = formData.penaltyDate || new Date().toISOString().split("T")[0];
+      const grievanceDeadlineDate = calculateFutureDate(grievanceStartDate, gWinDays);
+      const visibilityEndDate = calculateFutureDate(grievanceStartDate, vDurDays);
+
       const newPenalty = {
         penaltyNumber,
         referenceNumber: refNum,
@@ -1082,6 +1092,11 @@ export const Penalties: React.FC = () => {
         status: initialStatus,
         adminNotes: formData.adminNotes || "",
         employeeNotes: formData.employeeNotes || "",
+        grievanceWindowDays: gWinDays,
+        visibilityDurationDays: vDurDays,
+        grievanceStartDate,
+        grievanceDeadlineDate,
+        visibilityEndDate,
         auditTrail,
         createdAt: originalCreatedAt,
         updatedAt: new Date().toISOString(),
@@ -1132,6 +1147,8 @@ export const Penalties: React.FC = () => {
         employeeNotes: "",
         disciplinaryApprovalType: "Approved by Direct Manager",
         referenceNumber: "",
+        grievanceWindowDays: 7,
+        visibilityDurationDays: 30,
       });
       setActiveTab("list");
     } catch (err: any) {
@@ -1213,6 +1230,12 @@ export const Penalties: React.FC = () => {
           nextStatus = "Approved";
           actionName = "اعتماد نهائي من الموارد البشرية";
           extraFields.hrDecision = "Approved";
+          const approvalDate = new Date().toISOString().split("T")[0];
+          const gWinDays = Number(penalty.grievanceWindowDays) > 0 ? Number(penalty.grievanceWindowDays) : 7;
+          const vDurDays = Number(penalty.visibilityDurationDays) > 0 ? Number(penalty.visibilityDurationDays) : 30;
+          extraFields.grievanceStartDate = penalty.grievanceStartDate || approvalDate;
+          extraFields.grievanceDeadlineDate = penalty.grievanceDeadlineDate || calculateFutureDate(extraFields.grievanceStartDate, gWinDays);
+          extraFields.visibilityEndDate = penalty.visibilityEndDate || calculateFutureDate(extraFields.grievanceStartDate, vDurDays);
         } else if (action === "Returned") {
           if (!reasonText || !reasonText.trim()) {
             alert(t("يرجى كتابة سبب الإعادة للمراجعة للمتابعة"));
@@ -2368,7 +2391,7 @@ export const Penalties: React.FC = () => {
           {/* Grid table */}
           <div className="bg-card border border-border overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-right text-sm">
+              <table className="w-full min-w-[850px] text-right text-sm">
                 <thead>
                   <tr className="bg-muted/50 border-b border-border">
                     <th className="px-6 py-4 text-semibold text-muted-foreground">
@@ -2777,6 +2800,103 @@ export const Penalties: React.FC = () => {
                     setFormData({ ...formData, adminNotes: e.target.value })
                   }
                 />
+              </div>
+
+              {/* إعدادات مهلة تقديم التظلم ومدة ظهور الجزاء للموظف */}
+              <div className="md:col-span-2 p-4 bg-indigo-500/5 border border-indigo-500/20 space-y-4">
+                <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200">
+                  <Scale className="w-5 h-5 text-indigo-600" />
+                  <div>
+                    <h4 className="text-sm font-black">{t("إعدادات مهلة التظلم وظهور الجزاء للموظف")}</h4>
+                    <p className="text-[11px] text-muted-foreground">
+                      {t("تحديد عدد أيام مهلة تقديم التظلم الإداري ومدة استمرار إبراز الجزاء داخل لوحة الموظف")}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-foreground flex items-center justify-between">
+                      <span>{t("مهلة تقديم التظلم (بالأيام) *")}</span>
+                      <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono font-black">
+                        {formData.grievanceWindowDays || 7} {t("أيام")}
+                      </span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      required
+                      placeholder="7"
+                      className="w-full px-4 py-2.5 bg-background border border-border rounded-none focus:ring-2 focus:ring-indigo-600 outline-none text-foreground font-semibold text-sm"
+                      value={formData.grievanceWindowDays}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          grievanceWindowDays: Math.max(1, Number(e.target.value) || 1),
+                        })
+                      }
+                    />
+                    <span className="text-[10px] text-muted-foreground block">
+                      {t("عدد الأيام المسموح للموظف خلالها بتقديم تظلم من تاريخ اعتماد/إصدار الجزاء")}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-foreground flex items-center justify-between">
+                      <span>{t("مدة ظهور الجزاء للموظف (بالأيام) *")}</span>
+                      <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono font-black">
+                        {formData.visibilityDurationDays || 30} {t("يوماً")}
+                      </span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={3650}
+                      required
+                      placeholder="30"
+                      className="w-full px-4 py-2.5 bg-background border border-border rounded-none focus:ring-2 focus:ring-indigo-600 outline-none text-foreground font-semibold text-sm"
+                      value={formData.visibilityDurationDays}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          visibilityDurationDays: Math.max(1, Number(e.target.value) || 1),
+                        })
+                      }
+                    />
+                    <span className="text-[10px] text-muted-foreground block">
+                      {t("عدد الأيام التي يظل فيها الجزاء ظاهرًا داخل شاشة الموظف الرئيسية")}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Live Preview of Calculated Dates */}
+                <div className="p-3 bg-muted/40 border border-border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <span className="text-muted-foreground block text-[10px] font-bold">{t("تاريخ بداية التظلم:")}</span>
+                    <span className="font-extrabold text-foreground font-mono">
+                      {formData.penaltyDate || new Date().toISOString().split("T")[0]}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[10px] font-bold">{t("آخر موعد لتقديم التظلم:")}</span>
+                    <span className="font-black text-indigo-700 dark:text-indigo-300 font-mono">
+                      {calculateFutureDate(formData.penaltyDate || new Date().toISOString().split("T")[0], Number(formData.grievanceWindowDays) || 7)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[10px] font-bold">{t("حالة التظلم الافتراضية:")}</span>
+                    <span className="font-black text-emerald-600">
+                      {t("متاح")}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[10px] font-bold">{t("تاريخ انتهاء الظهور للموظف:")}</span>
+                    <span className="font-black text-amber-700 dark:text-amber-300 font-mono">
+                      {calculateFutureDate(formData.penaltyDate || new Date().toISOString().split("T")[0], Number(formData.visibilityDurationDays) || 30)}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -3187,6 +3307,85 @@ export const Penalties: React.FC = () => {
                   </div>
                 </div>
               </div>
+
+              {/* GRIEVANCE PERIOD & VISIBILITY TIMELINE METRICS */}
+              {(() => {
+                const gInfo = getGrievanceStatusInfo(viewingPenalty);
+                return (
+                  <div className="p-4 bg-muted/40 border border-border space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
+                      <span className="font-black text-xs text-foreground flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-indigo-600" />
+                        {t("مواعيد التظلم الإداري ومدة الظهور للموظف")}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          "px-2.5 py-0.5 text-[10px] font-black rounded-none border",
+                          gInfo.status === "submitted"
+                            ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/30"
+                            : gInfo.isAvailable
+                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                              : "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30"
+                        )}>
+                          {t("حالة التظلم:")} {gInfo.status === "submitted" ? t("تم التقديم") : (gInfo.isAvailable ? t("متاح") : t("منتهي"))}
+                        </span>
+                        <span className={cn(
+                          "px-2.5 py-0.5 text-[10px] font-black rounded-none border",
+                          !gInfo.isVisibilityExpired
+                            ? "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30"
+                            : "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/30"
+                        )}>
+                          {t("حالة الظهور:")} {!gInfo.isVisibilityExpired ? t("نشط باللوحة") : t("محفوظ بالسجل التاريخي")}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                      <div className="bg-card p-2.5 border border-border">
+                        <span className="text-muted-foreground block text-[10px] font-bold mb-0.5">
+                          {t("تاريخ بداية التظلم:")}
+                        </span>
+                        <span className="font-extrabold text-foreground font-mono">
+                          {gInfo.gStartDate}
+                        </span>
+                      </div>
+
+                      <div className="bg-card p-2.5 border border-border">
+                        <span className="text-muted-foreground block text-[10px] font-bold mb-0.5">
+                          {t("آخر موعد لتقديم التظلم:")}
+                        </span>
+                        <span className={cn("font-extrabold font-mono", gInfo.isAvailable ? "text-emerald-600" : "text-rose-600")}>
+                          {gInfo.gDeadline}
+                        </span>
+                        <span className="text-[9px] text-muted-foreground block mt-0.5">
+                          ({t("مهلة")} {gInfo.gWinDays} {t("أيام")} {gInfo.isAvailable ? `- ${t("متبقي")} ${gInfo.remainingGrievanceDays} ${t("يوم")}` : `- ${t("منتهية")}`})
+                        </span>
+                      </div>
+
+                      <div className="bg-card p-2.5 border border-border">
+                        <span className="text-muted-foreground block text-[10px] font-bold mb-0.5">
+                          {t("حالة التظلم:")}
+                        </span>
+                        <span className={cn("font-black text-xs", gInfo.isAvailable ? "text-emerald-600" : (gInfo.status === "submitted" ? "text-indigo-600" : "text-rose-600"))}>
+                          {gInfo.status === "submitted" ? t("تم تقديم التظلم") : (gInfo.isAvailable ? t("متاح") : t("منتهي"))}
+                        </span>
+                      </div>
+
+                      <div className="bg-card p-2.5 border border-border">
+                        <span className="text-muted-foreground block text-[10px] font-bold mb-0.5">
+                          {t("تاريخ انتهاء ظهور الجزاء للموظف:")}
+                        </span>
+                        <span className="font-extrabold text-foreground font-mono">
+                          {gInfo.vEndDate}
+                        </span>
+                        <span className="text-[9px] text-muted-foreground block mt-0.5">
+                          ({t("المدة الإجمالية:")} {gInfo.vDurDays} {t("يوماً")})
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* GRIEVANCE STATUS & DETAILS SECTION */}
               {viewingPenalty.hasGrievance && (

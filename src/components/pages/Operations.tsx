@@ -36,13 +36,27 @@ import {
   Folder,
   Calendar,
   Loader2,
-  GitFork
+  GitFork,
+  FileSpreadsheet,
+  Milestone,
+  Activity,
+  Download
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { db, collection, addDoc, deleteDoc, doc, updateDoc, arrayUnion } from '../../api';
-import { getAssignedEmployeeName, isOpenTask, getTaskAssignedIds } from '../../lib/taskUtils';
+import { 
+  getAssignedEmployeeName, 
+  isOpenTask, 
+  getTaskAssignedIds, 
+  getTaskDistinctAssignees, 
+  normalizeTaskAssigneeIds, 
+  findEmployeeByIdentifier,
+  getCurrentProjectPhase,
+  getProjectPhaseDetails
+} from '../../lib/taskUtils';
 import { Project, ProjectTask, ProjectStatus, TaskStatus, ProjectPhase, WorkflowLog, Employee, SubTask, TaskChatMessage, ProjectVisit } from '../../types';
 import { cn } from '../../lib/utils';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -52,7 +66,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 export const Operations: React.FC = () => {
   const { t, language } = useLanguage();
   const isRtl = language === 'ar';
-  const { projects, projectTasks, employees, missions, refreshData } = useData();
+  const { projects, projectTasks, employees, missions, missionTypes, refreshData } = useData();
   const { user, profile } = useAuth();
   const { canEdit } = usePermissions();
   const { 
@@ -413,6 +427,220 @@ export const Operations: React.FC = () => {
     return projectTasks.filter(t => t.projectId === selectedProjectId);
   }, [projectTasks, selectedProjectId]);
 
+  const currentActivePhase = useMemo(() => {
+    if (!selectedProject) return 'Analysis';
+    return getCurrentProjectPhase(selectedProject, projectTasks);
+  }, [selectedProject, projectTasks]);
+
+  const selectedProjectPhaseDetails = useMemo(() => {
+    if (!selectedProject) return null;
+    return getProjectPhaseDetails(selectedProject, projectTasks);
+  }, [selectedProject, projectTasks]);
+
+  const handleExportProjectExcel = useCallback(() => {
+    if (!selectedProject) return;
+
+    const phaseDetails = getProjectPhaseDetails(selectedProject, projectTasks);
+    const projTasks = projectTasks.filter(t => t.projectId === selectedProject.id);
+    const projMissions = missions.filter(m => m.projectId === selectedProject.id || m.destination?.includes(selectedProject.name) || m.reason?.includes(selectedProject.name));
+    const pmEmp = employees.find(e => e.id === selectedProject.projectManagerId);
+    const tlEmp = employees.find(e => e.id === selectedProject.teamLeaderId);
+    const consultEmp = employees.find(e => e.id === selectedProject.consultantTlId);
+    const devEmp = employees.find(e => e.id === selectedProject.developerTlId);
+
+    // List of responsible leads
+    const responsibleLeads = [
+      pmEmp ? `مدير المشروع: ${pmEmp.name}` : null,
+      tlEmp ? `قائد الفريق / التطوير: ${tlEmp.name}` : null,
+      consultEmp ? `قائد الاستشاريين: ${consultEmp.name}` : null,
+      devEmp ? `قائد المطورين: ${devEmp.name}` : null
+    ].filter(Boolean).join(' | ') || (pmEmp?.name || 'غير محدد');
+
+    // Scope string
+    const scopeNames = (selectedProject.scope && selectedProject.scope.length > 0)
+      ? selectedProject.scope.map(s => s.name).join(' | ')
+      : '---';
+
+    // Phases string
+    const phasesList = (selectedProject.phases && selectedProject.phases.length > 0)
+      ? selectedProject.phases.join(' ➔ ')
+      : '---';
+
+    // 1. Sheet 1: Project Summary
+    const summaryData = [
+      { 'البند / Field': 'اسم المشروع / Project Name', 'البيان / Value': selectedProject.name || '---' },
+      { 'البند / Field': 'وصف المشروع / Description', 'البيان / Value': selectedProject.description || '---' },
+      { 'البند / Field': 'نطاق المشروع Scope / Project Scope', 'البيان / Value': scopeNames },
+      { 'البند / Field': 'المراحل / Phases', 'البيان / Value': phasesList },
+      { 'البند / Field': 'المرحلة الحالية النشطة / Current Active Phase', 'البيان / Value': phaseDetails.currentPhase },
+      { 'البند / Field': 'مدير المشروع / Project Manager', 'البيان / Value': pmEmp?.name || 'غير محدد' },
+      { 'البند / Field': 'المسؤولون عن المشروع / Project Team Leads', 'البيان / Value': responsibleLeads },
+      { 'البند / Field': 'حالة المشروع / Project Status', 'البيان / Value': selectedProject.status || 'Active' },
+      { 'البند / Field': 'تاريخ البداية / Start Date', 'البيان / Value': selectedProject.startDate || '---' },
+      { 'البند / Field': 'تاريخ النهاية / End Date', 'البيان / Value': selectedProject.endDate || '---' },
+      { 'البند / Field': 'نسبة الإنجاز الكلية / Overall Progress', 'البيان / Value': `${phaseDetails.overallProgress}%` },
+      { 'البند / Field': 'نوع المشروع / Type', 'البيان / Value': selectedProject.parentProjectId ? 'مشروع فرعي / Sub-Project' : 'مشروع رئيسي / Main Project' },
+      { 'البند / Field': 'العميل / Client', 'البيان / Value': selectedProject.clientName || '---' },
+      { 'البند / Field': 'إجمالي المراحل / Total Phases', 'البيان / Value': phaseDetails.totalPhases },
+      { 'البند / Field': 'إجمالي المهام / Total Tasks', 'البيان / Value': projTasks.length },
+      { 'البند / Field': 'المهام المنجزة / Completed Tasks', 'البيان / Value': projTasks.filter(t => !isOpenTask(t)).length },
+      { 'البند / Field': 'المهام المفتوحة وقيد التنفيذ / Open Tasks', 'البيان / Value': projTasks.filter(t => isOpenTask(t)).length },
+      { 'البند / Field': 'إجمالي المأموريات المرتبطة / Associated Missions', 'البيان / Value': projMissions.length },
+      { 'البند / Field': 'تفاصيل إضافية / Additional Details', 'البيان / Value': selectedProject.details || '---' }
+    ];
+
+    // 2. Sheet 2: Tasks & Missions
+    const tasksData = projTasks.map((t, idx) => {
+      const assignedNames = getTaskDistinctAssignees(t, employees).map(a => a.name).join(', ') || t.assignedTo || 'غير مسند';
+      const isDone = !isOpenTask(t);
+      const actualCompletionDate = t.completedAt 
+        ? new Date(t.completedAt).toLocaleDateString('ar-EG') 
+        : (isDone && t.updatedAt ? new Date(t.updatedAt).toLocaleDateString('ar-EG') : '---');
+
+      return {
+        'م': idx + 1,
+        'النوع / Type': 'مهمة / Task',
+        'كود المعرف / ID': t.id,
+        'اسم المهمة أو المأمورية / Title': t.title,
+        'المرحلة / Phase': t.phase || 'عام / بدون مرحلة',
+        'نطاق العمل / Scope': t.subPhase || (t.phase ? `نطاق ${t.phase}` : 'عام / General'),
+        'حالة المهمة / Status': t.status,
+        'حالة الإنجاز / State': isDone ? 'منجزة ✓' : 'مفتوحة / قيد التنفيذ',
+        'الموظف/الموظفون المعيّنون عليها / Assigned Employees': assignedNames,
+        'تاريخ البداية / Start Date': t.startDate || t.actualStartDate || '---',
+        'تاريخ الاستحقاق (النهاية) / Due Date': t.endDate || '---',
+        'تاريخ الإنهاء الفعلي / Actual Completion Date': actualCompletionDate,
+        'الساعات المقدرة / Est. Hours': t.estimatedHours || 0,
+        'الأولوية / Priority': t.priority || 'Medium',
+        'الوصف والملاحظات / Description & Notes': t.description || t.completionNotes || '---'
+      };
+    });
+
+    const missionsData = projMissions.map((m, idx) => {
+      const emp = employees.find(e => e.id === m.employeeId);
+      const mType = missionTypes?.find(mt => mt.id === m.missionTypeId)?.name || 'مأمورية ميدانية';
+      const isDone = m.status === 'Completed' || m.status === 'Executed';
+      const actualCompletionDate = isDone ? (m.endDate || '---') : '---';
+
+      return {
+        'م': projTasks.length + idx + 1,
+        'النوع / Type': 'مأمورية / Mission',
+        'كود المعرف / ID': m.id,
+        'اسم المهمة أو المأمورية / Title': `${mType}${m.destination ? ` - ${m.destination}` : ''}`,
+        'المرحلة / Phase': 'مأموريات المشروع / Field Mission',
+        'نطاق العمل / Scope': m.destination || m.reason || 'نطاق ميداني',
+        'حالة المهمة / Status': m.status,
+        'حالة الإنجاز / State': isDone ? 'منجزة / منفذة ✓' : (m.status === 'Approved' ? 'معتمدة / جارية' : (m.status === 'Pending' ? 'مفتوحة / قيد الموافقة' : m.status)),
+        'الموظف/الموظفون المعيّنون عليها / Assigned Employees': emp?.name || m.employeeId || 'غير محدد',
+        'تاريخ البداية / Start Date': m.startDate || '---',
+        'تاريخ الاستحقاق (النهاية) / Due Date': m.endDate || '---',
+        'تاريخ الإنهاء الفعلي / Actual Completion Date': actualCompletionDate,
+        'الساعات المقدرة / Est. Hours': 0,
+        'الأولوية / Priority': 'Normal',
+        'الوصف والملاحظات / Description & Notes': [m.reason, m.notes, m.destination].filter(Boolean).join(' | ') || '---'
+      };
+    });
+
+    const combinedTasksAndMissions = [...tasksData, ...missionsData];
+
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Project Summary
+    const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+    wsSummary['!cols'] = [
+      { wch: 36 },
+      { wch: 70 }
+    ];
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Project Summary');
+
+    // Sheet 2: Tasks & Missions
+    const wsTasksMissions = XLSX.utils.json_to_sheet(
+      combinedTasksAndMissions.length > 0
+        ? combinedTasksAndMissions
+        : [{
+            'م': 1,
+            'النوع / Type': '---',
+            'كود المعرف / ID': '---',
+            'اسم المهمة أو المأمورية / Title': 'لا توجد مهام أو مأموريات مسجلة لهذا المشروع حالياً',
+            'المرحلة / Phase': '---',
+            'نطاق العمل / Scope': '---',
+            'حالة المهمة / Status': '---',
+            'حالة الإنجاز / State': '---',
+            'الموظف/الموظفون المعيّنون عليها / Assigned Employees': '---',
+            'تاريخ البداية / Start Date': '---',
+            'تاريخ الاستحقاق (النهاية) / Due Date': '---',
+            'تاريخ الإنهاء الفعلي / Actual Completion Date': '---',
+            'الساعات المقدرة / Est. Hours': 0,
+            'الأولوية / Priority': '---',
+            'الوصف والملاحظات / Description & Notes': '---'
+          }]
+    );
+
+    wsTasksMissions['!cols'] = [
+      { wch: 6 },  // م
+      { wch: 16 }, // النوع
+      { wch: 15 }, // ID
+      { wch: 32 }, // اسم المهمة
+      { wch: 22 }, // المرحلة
+      { wch: 22 }, // نطاق العمل
+      { wch: 16 }, // الحالة
+      { wch: 20 }, // حالة الإنجاز
+      { wch: 28 }, // الموظف
+      { wch: 16 }, // تاريخ البداية
+      { wch: 16 }, // تاريخ الاستحقاق
+      { wch: 18 }, // تاريخ الإنهاء الفعلي
+      { wch: 14 }, // الساعات المقدرة
+      { wch: 12 }, // الأولوية
+      { wch: 40 }  // الوصف والملاحظات
+    ];
+
+    if (wsTasksMissions['!ref']) {
+      wsTasksMissions['!autofilter'] = { ref: wsTasksMissions['!ref'] };
+    }
+
+    XLSX.utils.book_append_sheet(wb, wsTasksMissions, 'Tasks & Missions');
+
+    const safeProjectName = selectedProject.name.replace(/[/\\?%*:|"<>]/g, '_');
+    XLSX.writeFile(wb, `${safeProjectName}_تقرير_المشروع_الشامل_${new Date().toISOString().split('T')[0]}.xlsx`);
+  }, [selectedProject, projectTasks, missions, missionTypes, employees]);
+
+  const handleExportAllProjectsExcel = useCallback(() => {
+    if (projects.length === 0) return;
+
+    const data = projects.map((p, idx) => {
+      const phaseDetails = getProjectPhaseDetails(p, projectTasks);
+      const projTasks = projectTasks.filter(t => t.projectId === p.id);
+      const pmEmp = employees.find(e => e.id === p.projectManagerId);
+      const tlEmp = employees.find(e => e.id === p.teamLeaderId);
+      const consultEmp = employees.find(e => e.id === p.consultantTlId);
+      const completedTasks = projTasks.filter(t => !isOpenTask(t)).length;
+
+      return {
+        'م': idx + 1,
+        'اسم المشروع / Project Name': p.name,
+        'نوع المشروع / Type': p.parentProjectId ? 'مشروع فرعي' : 'مشروع رئيسي',
+        'العميل / Client': p.clientName || '---',
+        'المرحلة الحالية للمشروع / Current Project Phase': phaseDetails.currentPhase,
+        'حالة المشروع / Status': p.status || 'Active',
+        'مدير المشروع / Project Manager': pmEmp?.name || '---',
+        'قائد التطوير / Team Leader': tlEmp?.name || '---',
+        'قائد الاستشاريين / Consultant Lead': consultEmp?.name || '---',
+        'تاريخ البداية / Start Date': p.startDate || '---',
+        'تاريخ النهاية / End Date': p.endDate || '---',
+        'نسبة الإنجاز / Overall Progress': `${phaseDetails.overallProgress}%`,
+        'إجمالي المراحل / Total Phases': phaseDetails.totalPhases,
+        'إجمالي المهام / Total Tasks': projTasks.length,
+        'المهام المنجزة / Completed Tasks': completedTasks,
+        'المهام المتبقية / Open Tasks': projTasks.length - completedTasks
+      };
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, 'المشاريع والمراحل الحالية');
+    XLSX.writeFile(wb, `تقرير_المشاريع_والمراحل_الحالية_${new Date().toISOString().split('T')[0]}.xlsx`);
+  }, [projects, projectTasks, employees]);
+
   const handleAddScopeToProject = async () => {
     if (!canEditScope) {
       alert('عذراً، ليس لديك صلاحية تعديل وإدارة نطاق واسكوب المشروع');
@@ -728,25 +956,15 @@ export const Operations: React.FC = () => {
     setIsSubmittingTask(true);
     try {
       const targetProjectId = selectedProjectId || (taskForm as any).projectId || null;
-      const assignedEmp = employees.find(emp => 
-        emp.id === taskForm.assignedToId || 
-        emp.employeeId === taskForm.assignedToId || 
-        emp.userId === taskForm.assignedToId
-      );
-      
-      const allSelectedEmpIds = new Set<string>();
-      if (taskForm.assignedToId) allSelectedEmpIds.add(String(taskForm.assignedToId).trim().toLowerCase());
-      if (Array.isArray(taskForm.assignedToIds)) {
-        taskForm.assignedToIds.forEach(id => {
-          if (id) allSelectedEmpIds.add(String(id).trim().toLowerCase());
-        });
-      }
-      if (assignedEmp) {
-        if (assignedEmp.id) allSelectedEmpIds.add(String(assignedEmp.id).trim().toLowerCase());
-        if (assignedEmp.employeeId) allSelectedEmpIds.add(String(assignedEmp.employeeId).trim().toLowerCase());
-        if (assignedEmp.userId) allSelectedEmpIds.add(String(assignedEmp.userId).trim().toLowerCase());
-      }
-      const assignedToIds = Array.from(allSelectedEmpIds);
+      const rawSelected = [
+        taskForm.assignedToId,
+        ...(Array.isArray(taskForm.assignedToIds) ? taskForm.assignedToIds : [])
+      ].filter(Boolean) as string[];
+
+      const assignedToIds = normalizeTaskAssigneeIds(rawSelected, employees);
+      const primaryEmp = assignedToIds.length > 0 ? findEmployeeByIdentifier(assignedToIds[0], employees) : undefined;
+      const assignedToName = primaryEmp?.name || (assignedToIds.length > 0 ? assignedToIds[0] : '');
+      const assignedToId = primaryEmp?.id || primaryEmp?.employeeId || (assignedToIds.length > 0 ? assignedToIds[0] : null);
 
       const newTask: any = {
         title: taskForm.title.trim(),
@@ -760,8 +978,8 @@ export const Operations: React.FC = () => {
         assignedBy: user.uid,
         assignedById: user.uid,
         assignedByName: profile?.name || user.displayName || 'User',
-        assignedTo: assignedEmp?.name || taskForm.assignedToId || '',
-        assignedToId: taskForm.assignedToId || (assignedToIds[0] || null),
+        assignedTo: assignedToName,
+        assignedToId: assignedToId,
         assignedToIds: assignedToIds,
         parentTaskId: taskForm.parentTaskId || null,
         startDate: taskForm.startDate || new Date().toISOString().split('T')[0],
@@ -774,7 +992,7 @@ export const Operations: React.FC = () => {
           userId: user.uid,
           userName: profile?.name || user.displayName || 'User',
           timestamp: new Date().toISOString(),
-          note: `Task Created and assigned to ${assignedEmp?.name || taskForm.assignedToId || 'unassigned'}`
+          note: `Task Created and assigned to ${assignedToName || 'unassigned'}`
         }],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -966,7 +1184,7 @@ export const Operations: React.FC = () => {
         title={t('تأكيد حذف المشروع')}
         description={t('هل أنت متأكد من حذف هذا المشروع نهائياً؟ سيتم حذف جميع المهام والمرفقات والمحادثات المرتبطة به. لا يمكن التراجع عن هذا الإجراء.')}
       />
-      <div className="flex justify-between items-center bg-card p-8 rounded-[3rem] border border-border shadow-sm">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-8 rounded-[3rem] border border-border shadow-sm">
         <div className="flex items-center gap-6">
           <motion.div 
             className="w-16 h-16 bg-indigo-600 rounded-[1.5rem] flex items-center justify-center text-white shadow-xl shadow-indigo-600/20 cursor-pointer select-none"
@@ -980,32 +1198,43 @@ export const Operations: React.FC = () => {
             <p className="text-muted-foreground font-medium text-lg">{t('إدارة مشاريع السوفتوير والمخططات الزمنية وفريق العمل')}</p>
           </div>
         </div>
-        {canCreateProject() && (
-          <button 
-            onClick={() => {
-              setProjectForm({
-                name: '',
-                parentProjectId: '',
-                clientName: '',
-                description: '',
-                details: '',
-                projectManagerId: '',
-                teamLeaderId: '',
-                consultantTlId: '',
-                developerTlId: '',
-                phases: ['Analysis', 'Design', 'Development'],
-                scope: [],
-                visitFollowUps: [],
-                status: 'Active',
-                startDate: '',
-                endDate: ''
-              });
-              setIsProjectModalOpen(true);
-            }}
-            className="bg-primary text-primary-foreground px-8 py-5 rounded-[1.5rem] font-black shadow-lg shadow-primary/10 hover:bg-primary/90 transition-all flex items-center gap-3 hover:scale-105 active:scale-95"
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={handleExportAllProjectsExcel}
+            className="bg-card border border-border text-foreground px-6 py-5 rounded-[1.5rem] font-black shadow-xs hover:bg-muted/80 transition-all flex items-center gap-2.5 hover:scale-105 active:scale-95 text-sm cursor-pointer"
+            title={t('تصدير قائمة كل المشاريع والمراحل الحالية إلى ملف Excel')}
           >
-            <Plus className="w-6 h-6" />{t('فتح مشروع جديد')}</button>
-        )}
+            <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+            <span>{t('تصدير المشاريع (Excel)')}</span>
+          </button>
+
+          {canCreateProject() && (
+            <button 
+              onClick={() => {
+                setProjectForm({
+                  name: '',
+                  parentProjectId: '',
+                  clientName: '',
+                  description: '',
+                  details: '',
+                  projectManagerId: '',
+                  teamLeaderId: '',
+                  consultantTlId: '',
+                  developerTlId: '',
+                  phases: ['Analysis', 'Design', 'Development', 'Testing', 'UAT', 'Go-Live'],
+                  scope: [],
+                  visitFollowUps: [],
+                  status: 'Active',
+                  startDate: '',
+                  endDate: ''
+                });
+                setIsProjectModalOpen(true);
+              }}
+              className="bg-primary text-primary-foreground px-8 py-5 rounded-[1.5rem] font-black shadow-lg shadow-primary/10 hover:bg-primary/90 transition-all flex items-center gap-3 hover:scale-105 active:scale-95 cursor-pointer"
+            >
+              <Plus className="w-6 h-6" />{t('فتح مشروع جديد')}</button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -1023,7 +1252,9 @@ export const Operations: React.FC = () => {
           </div>
 
           <div className="space-y-4 max-h-[700px] overflow-y-auto pr-2 custom-scrollbar">
-            {filteredProjects.filter(p => !p.parentProjectId).map(parentProj => (
+            {filteredProjects.filter(p => !p.parentProjectId).map(parentProj => {
+              const parentPhase = getCurrentProjectPhase(parentProj, projectTasks);
+              return (
               <div key={parentProj.id} className="space-y-2">
                 <button
                   onClick={() => setSelectedProjectId(parentProj.id)}
@@ -1034,29 +1265,52 @@ export const Operations: React.FC = () => {
                       : "bg-card border-border hover:border-primary/50"
                   )}
                 >
-                  <div className="flex justify-between items-start mb-4">
+                  <div className="flex justify-between items-start mb-3">
                     <div className={cn(
-                      "w-12 h-12 rounded-2xl flex items-center justify-center transition-colors",
+                      "w-12 h-12 rounded-2xl flex items-center justify-center transition-colors shrink-0",
                       selectedProjectId === parentProj.id ? "bg-white/20 text-white" : "bg-primary/10 text-primary"
                     )}>
                       <Globe className="w-6 h-6" />
                     </div>
-                    <span className={cn(
-                      "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                      selectedProjectId === parentProj.id ? "bg-white/20 text-white" : "bg-emerald-500/10 text-emerald-500"
-                    )}>
-                      {parentProj.status}
-                    </span>
+                    <div className="flex flex-col items-end gap-1.5">
+                      <span className={cn(
+                        "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                        selectedProjectId === parentProj.id ? "bg-white/20 text-white" : "bg-emerald-500/10 text-emerald-500"
+                      )}>
+                        {parentProj.status}
+                      </span>
+                    </div>
                   </div>
                   <h3 className={cn(
-                    "text-xl font-black mb-1",
+                    "text-xl font-black mb-1 truncate",
                     selectedProjectId === parentProj.id ? "text-white" : "text-foreground"
                   )}>{parentProj.name}</h3>
                   <p className={cn(
-                    "text-sm font-bold opacity-70 mb-4",
+                    "text-sm font-bold opacity-70 mb-3",
                     selectedProjectId === parentProj.id ? "text-white" : "text-muted-foreground"
                   )}>{parentProj.clientName}</p>
                   
+                  {/* Current Project Phase on Card */}
+                  <div className={cn(
+                    "mt-2 pt-3 border-t flex items-center justify-between text-xs font-bold",
+                    selectedProjectId === parentProj.id 
+                      ? "border-white/20 text-white/90" 
+                      : "border-border/60 text-muted-foreground"
+                  )}>
+                    <span className="text-[11px] font-black flex items-center gap-1.5 opacity-90">
+                      <Milestone className="w-3.5 h-3.5 shrink-0" />
+                      {t('المرحلة الحالية:')}
+                    </span>
+                    <span className={cn(
+                      "px-2.5 py-0.5 rounded-lg text-[11px] font-black tracking-wide",
+                      selectedProjectId === parentProj.id 
+                        ? "bg-white/25 text-white shadow-xs" 
+                        : "bg-primary/10 text-primary border border-primary/20"
+                    )}>
+                      {parentPhase}
+                    </span>
+                  </div>
+
                   {selectedProjectId === parentProj.id && (
                     <motion.div 
                       layoutId="active-indicator"
@@ -1068,7 +1322,9 @@ export const Operations: React.FC = () => {
                 </button>
                 
                 {/* Visual rendering of Sub-projects associated with this parent project */}
-                {filteredProjects.filter(sub => sub.parentProjectId === parentProj.id).map(subProj => (
+                {filteredProjects.filter(sub => sub.parentProjectId === parentProj.id).map(subProj => {
+                  const subPhase = getCurrentProjectPhase(subProj, projectTasks);
+                  return (
                   <button
                     key={subProj.id}
                     onClick={() => setSelectedProjectId(subProj.id)}
@@ -1095,16 +1351,38 @@ export const Operations: React.FC = () => {
                       "text-sm font-black mb-1",
                       selectedProjectId === subProj.id ? "text-white" : "text-foreground"
                     )}>{subProj.name}</h3>
+
+                    {/* Subproject Current Phase */}
+                    <div className={cn(
+                      "mt-2 pt-2 border-t flex items-center justify-between text-[10px] font-bold",
+                      selectedProjectId === subProj.id ? "border-white/20 text-white/90" : "border-border/60 text-muted-foreground"
+                    )}>
+                      <span className="flex items-center gap-1 font-black">
+                        <Milestone className="w-3 h-3" />
+                        {t('المرحلة:')}
+                      </span>
+                      <span className={cn(
+                        "px-2 py-0.5 rounded-md font-black",
+                        selectedProjectId === subProj.id ? "bg-white/20 text-white" : "bg-primary/10 text-primary"
+                      )}>
+                        {subPhase}
+                      </span>
+                    </div>
+
                     {selectedProjectId === subProj.id && (
                       <ChevronRight className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white" />
                     )}
                   </button>
-                ))}
+                  );
+                })}
               </div>
-            ))}
+              );
+            })}
             
             {/* Display orphan subprojects (their parent was deleted or not matching search context) */}
-            {filteredProjects.filter(p => p.parentProjectId && !filteredProjects.find(parent => parent.id === p.parentProjectId)).map(p => (
+            {filteredProjects.filter(p => p.parentProjectId && !filteredProjects.find(parent => parent.id === p.parentProjectId)).map(p => {
+              const orphanPhase = getCurrentProjectPhase(p, projectTasks);
+              return (
               <button
                 key={p.id}
                 onClick={() => setSelectedProjectId(p.id)}
@@ -1132,11 +1410,22 @@ export const Operations: React.FC = () => {
                     selectedProjectId === p.id ? "text-foreground" : "text-foreground/80"
                   )}>{p.name}</h3>
                   <p className={cn(
-                    "text-sm font-bold opacity-70 mb-4",
+                    "text-sm font-bold opacity-70 mb-3",
                     selectedProjectId === p.id ? "text-muted-foreground" : "text-muted-foreground/60"
                   )}>{p.clientName}</p>
+
+                  <div className="mt-2 pt-2 border-t border-border flex items-center justify-between text-[11px] font-bold text-muted-foreground">
+                    <span className="flex items-center gap-1 font-black">
+                      <Milestone className="w-3.5 h-3.5 text-primary" />
+                      {t('المرحلة:')}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-primary/10 text-primary font-black">
+                      {orphanPhase}
+                    </span>
+                  </div>
                 </button>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -1160,6 +1449,13 @@ export const Operations: React.FC = () => {
                         <Layers className="w-4 h-4" />{t('تفاصيل المشروع')}</div>
                       <h2 className="text-4xl font-black text-foreground mb-2">{selectedProject.name}</h2>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-muted-foreground font-bold text-xs mb-4">
+                        {/* Current Project Phase in Header */}
+                        <div className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary/10 text-primary rounded-full border border-primary/20 shadow-xs">
+                          <Milestone className="w-3.5 h-3.5 text-primary shrink-0" />
+                          <span className="text-muted-foreground font-black text-xs">{t('المرحلة الحالية للمشروع:')}</span>
+                          <span className="text-primary font-black text-xs tracking-wide">{currentActivePhase}</span>
+                        </div>
+
                         <div className="flex items-center gap-1.5 px-3 py-1 bg-muted rounded-full border border-border">
                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
                            <span className="text-muted-foreground/60">{t('مدير المشروع:')}</span>
@@ -1189,14 +1485,22 @@ export const Operations: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-3">
                        <button 
+                          onClick={handleExportProjectExcel}
+                          className="p-4 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-2xl hover:bg-emerald-500/20 transition-all flex items-center gap-2 font-black border border-emerald-500/20 hover:scale-105 cursor-pointer shadow-xs"
+                          title={t('تصدير تقرير المشروع الشامل إلى Excel')}
+                       >
+                         <FileSpreadsheet className="w-5 h-5" />
+                         <span className="text-xs">{t('تقرير Excel')}</span>
+                       </button>
+                       <button 
                           onClick={() => setIsProjectChatOpen(true)}
-                          className="p-4 bg-primary/10 text-primary rounded-2xl hover:bg-primary/20 transition-all flex items-center gap-2 font-black"
+                          className="p-4 bg-primary/10 text-primary rounded-2xl hover:bg-primary/20 transition-all flex items-center gap-2 font-black cursor-pointer"
                        >
                          <MessageSquare className="w-6 h-6" />{t('محادثة المشروع')}</button>
                        {canDeleteProject(selectedProject) && (
                          <button 
                            onClick={() => setDeleteConfirmId(selectedProject.id)}
-                           className="p-4 bg-destructive/10 text-destructive rounded-2xl hover:bg-destructive/20 transition-all hover:scale-105"
+                           className="p-4 bg-destructive/10 text-destructive rounded-2xl hover:bg-destructive/20 transition-all hover:scale-105 cursor-pointer"
                          >
                            <Trash2 className="w-6 h-6" />
                          </button>
@@ -1237,6 +1541,97 @@ export const Operations: React.FC = () => {
                         exit={{ opacity: 0, y: -10 }}
                         className="space-y-8"
                       >
+                        {/* Current Project Phase Summary Card */}
+                        <div className="p-8 bg-gradient-to-r from-primary/10 via-primary/5 to-card rounded-[2.5rem] border border-primary/20 space-y-6 shadow-sm">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                            <div className="flex items-center gap-4">
+                              <div className="w-14 h-14 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center shadow-lg shadow-primary/20 shrink-0">
+                                <Milestone className="w-7 h-7" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-black text-muted-foreground uppercase tracking-widest">
+                                    {t('المرحلة الحالية للمشروع')}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground/80 font-bold">
+                                    / Current Project Phase
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                  <h3 className="text-2xl sm:text-3xl font-black text-foreground">{currentActivePhase}</h3>
+                                  <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
+                                    <Activity className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
+                                    {t('المرحلة النشطة الحالية')}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {selectedProjectPhaseDetails && (
+                              <div className="flex items-center gap-4 text-xs font-bold text-muted-foreground self-end sm:self-center">
+                                <div className="text-left sm:text-right">
+                                  <span className="text-sm font-black text-foreground block">
+                                    {selectedProjectPhaseDetails.overallProgress}% {t('نسبة إنجاز المشروع')}
+                                  </span>
+                                  <span className="text-[11px] text-muted-foreground">
+                                    {t('المرحلة')} {selectedProjectPhaseDetails.currentPhaseIndex + 1} {t('من')} {selectedProjectPhaseDetails.totalPhases}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={handleExportProjectExcel}
+                                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all flex items-center gap-2 shadow-xs cursor-pointer"
+                                >
+                                  <FileSpreadsheet className="w-4 h-4" />
+                                  <span>{t('تصدير Excel')}</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Phase Pipeline Step Visualizer */}
+                          {selectedProjectPhaseDetails && (
+                            <div className="pt-4 border-t border-primary/10">
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+                                {selectedProjectPhaseDetails.phaseStats.map((stat, idx) => {
+                                  const isCurrent = stat.phase === currentActivePhase;
+                                  return (
+                                    <div 
+                                      key={stat.phase}
+                                      className={cn(
+                                        "p-3 rounded-2xl border text-right transition-all flex flex-col justify-between min-h-[72px]",
+                                        isCurrent 
+                                          ? "bg-primary text-primary-foreground border-primary shadow-md ring-2 ring-primary/30" 
+                                          : stat.isCompleted
+                                          ? "bg-card border-emerald-500/30 text-foreground"
+                                          : "bg-muted/40 border-border text-muted-foreground"
+                                      )}
+                                    >
+                                      <div className="flex items-center justify-between text-[10px] font-black mb-1">
+                                        <span className={cn(isCurrent ? "text-white/90" : "text-muted-foreground")}>#{idx + 1}</span>
+                                        {stat.isCompleted ? (
+                                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                                        ) : isCurrent ? (
+                                          <Activity className="w-4 h-4 text-white animate-pulse shrink-0" />
+                                        ) : (
+                                          <Clock className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                                        )}
+                                      </div>
+                                      <div>
+                                        <p className={cn("text-xs font-black truncate", isCurrent ? "text-white" : "text-foreground")}>
+                                          {stat.phase}
+                                        </p>
+                                        <p className={cn("text-[9px] font-bold mt-0.5", isCurrent ? "text-white/80" : "text-muted-foreground")}>
+                                          {stat.completedTasks}/{stat.totalTasks} {t('مهمة')}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
                         <div className="p-8 bg-primary/5 rounded-[2.5rem] border border-primary/10">
                            <div className="flex items-center gap-2 text-sm font-black text-primary mb-4">
                               <FileText className="w-4 h-4"/>{t('وصف وتفاصيل إضافية')}</div>
@@ -1304,7 +1699,24 @@ export const Operations: React.FC = () => {
                            </div>
                          </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 p-6 bg-muted/50 rounded-[2rem] border border-border mt-8">
+                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 p-6 bg-muted/50 rounded-[2rem] border border-border mt-8">
+                            {/* Current Project Phase Field in Grid */}
+                            <div className="p-3 bg-card rounded-2xl border border-primary/20">
+                              <p className="text-[10px] text-muted-foreground font-black mb-1 uppercase tracking-widest flex items-center gap-1">
+                                <Milestone className="w-3.5 h-3.5 text-primary" />
+                                {t('المرحلة الحالية للمشروع')}
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-xl text-xs font-black border border-primary/20 tracking-wide inline-flex items-center gap-1">
+                                  <Activity className="w-3 h-3 text-primary animate-pulse" />
+                                  {currentActivePhase}
+                                </span>
+                              </div>
+                              <p className="text-[9px] text-muted-foreground/80 font-bold mt-0.5">
+                                Current Project Phase
+                              </p>
+                            </div>
+
                             <div>
                               <p className="text-[10px] text-muted-foreground font-black mb-1 uppercase tracking-widest">{t('مدير المشروع')}</p>
                               <div className="flex items-center gap-1">
@@ -1551,13 +1963,26 @@ export const Operations: React.FC = () => {
                 <div className="space-y-6">
                   <div className="flex justify-between items-center px-4 flex-wrap gap-3">
                     <div className="flex items-center gap-4 overflow-x-auto pb-2 no-scrollbar flex-1">
-                      <h3 className="text-2xl font-black text-gray-900 whitespace-nowrap">{t('سير العمل')}</h3>
+                      <h3 className="text-2xl font-black text-foreground whitespace-nowrap">{t('سير العمل')}</h3>
                       <div className="flex items-center gap-2 flex-wrap">
-                        {selectedProject.phases?.map(p => (
-                          <span key={p} className="px-4 py-1.5 rounded-full text-xs font-black bg-gray-100 text-gray-600 whitespace-nowrap">
-                            {p}
-                          </span>
-                        )) || <span className="text-gray-400 text-sm font-medium italic">{t('لم يتم تعريف مراحل')}</span>}
+                        {selectedProject.phases?.map(p => {
+                          const isCurrent = p === currentActivePhase;
+                          return (
+                            <span 
+                              key={p} 
+                              className={cn(
+                                "px-4 py-1.5 rounded-full text-xs font-black whitespace-nowrap transition-all flex items-center gap-1.5",
+                                isCurrent 
+                                  ? "bg-primary text-primary-foreground shadow-md ring-2 ring-primary/20" 
+                                  : "bg-muted text-muted-foreground border border-border"
+                              )}
+                            >
+                              {isCurrent && <Activity className="w-3 h-3 animate-pulse" />}
+                              {p}
+                              {isCurrent && <span className="text-[10px] opacity-90">({t('النشطة')})</span>}
+                            </span>
+                          );
+                        }) || <span className="text-muted-foreground text-sm font-medium italic">{t('لم يتم تعريف مراحل')}</span>}
                       </div>
                     </div>
 
@@ -1565,9 +1990,9 @@ export const Operations: React.FC = () => {
                       {canEditPhases && (
                         <button
                           onClick={() => setIsPhaseModalOpen(true)}
-                          className="bg-blue-50 hover:bg-blue-100 border border-blue-200 px-4 py-3 rounded-2xl font-black text-xs text-blue-700 transition-all flex items-center gap-2 shadow-xs whitespace-nowrap cursor-pointer"
+                          className="bg-primary/10 hover:bg-primary/20 border border-primary/20 px-4 py-3 rounded-2xl font-black text-xs text-primary transition-all flex items-center gap-2 shadow-xs whitespace-nowrap cursor-pointer"
                         >
-                          <Layers className="w-4 h-4 text-blue-600" />
+                          <Layers className="w-4 h-4 text-primary" />
                           <span>{t('إدارة المراحل')}</span>
                         </button>
                       )}
@@ -1575,7 +2000,7 @@ export const Operations: React.FC = () => {
                       {canCreateTask(selectedProject) && (
                         <button 
                           onClick={() => {
-                            setTaskForm({ ...taskForm, phase: selectedProject.phases?.[0] || '' });
+                            setTaskForm({ ...taskForm, phase: currentActivePhase || selectedProject.phases?.[0] || '' });
                             setIsTaskModalOpen(true);
                           }}
                           className="bg-card text-primary border border-border px-6 py-3 rounded-2xl font-black hover:bg-primary/10 transition-all flex items-center gap-2 shadow-sm whitespace-nowrap cursor-pointer"
@@ -1586,12 +2011,29 @@ export const Operations: React.FC = () => {
                   </div>
 
                   <div className="flex gap-6 overflow-x-auto pb-8 snap-x custom-scrollbar">
-                    {selectedProject.phases?.map(phaseName => (
+                    {selectedProject.phases?.map(phaseName => {
+                      const isCurrent = phaseName === currentActivePhase;
+                      return (
                       <div key={phaseName} className="min-w-[320px] max-w-[320px] snap-center space-y-4">
-                        <div className="p-4 bg-muted rounded-2xl border border-border flex items-center justify-between group">
+                        <div className={cn(
+                          "p-4 rounded-2xl border flex items-center justify-between group transition-all",
+                          isCurrent 
+                            ? "bg-primary/10 border-primary shadow-md ring-1 ring-primary/30" 
+                            : "bg-muted rounded-2xl border-border"
+                        )}>
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <Layers className="w-5 h-5 text-primary shrink-0" />
-                            <span className="font-black text-foreground truncate">{phaseName}</span>
+                            <Layers className={cn("w-5 h-5 shrink-0", isCurrent ? "text-primary" : "text-muted-foreground")} />
+                            <div className="min-w-0">
+                              <span className={cn("font-black truncate block text-sm", isCurrent ? "text-primary" : "text-foreground")}>
+                                {phaseName}
+                              </span>
+                              {isCurrent && (
+                                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                  <Activity className="w-3 h-3 animate-pulse" />
+                                  {t('المرحلة الحالية')}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           
                           <div className="flex items-center gap-1.5">
@@ -1619,7 +2061,12 @@ export const Operations: React.FC = () => {
                                 </button>
                               </div>
                             )}
-                            <span className="text-xs font-black text-muted-foreground bg-card px-2 py-0.5 rounded-lg border border-border shrink-0">
+                            <span className={cn(
+                              "text-xs font-black px-2 py-0.5 rounded-lg border shrink-0",
+                              isCurrent 
+                                ? "bg-primary text-primary-foreground border-primary" 
+                                : "bg-card text-muted-foreground border-border"
+                            )}>
                               {projectSpecificTasks.filter(t => t.phase === phaseName && !t.parentTaskId).length}
                             </span>
                           </div>
@@ -1634,7 +2081,8 @@ export const Operations: React.FC = () => {
                            }}
                          />
                        </div>
-                     ))}
+                      );
+                    })}
 
                     {/* UNPHASED / GENERAL PROJECT TASKS */}
                     {(() => {
@@ -2186,35 +2634,78 @@ export const Operations: React.FC = () => {
                   <div className="space-y-2">
                      <label className="text-xs font-black text-muted-foreground text-right block">{t('التوجيه والإسناد للموظفين')}</label>
                      
-                     {taskForm.assignedToIds && taskForm.assignedToIds.length > 0 && (
-                       <div className="flex flex-wrap gap-1.5 mb-1.5">
-                         {taskForm.assignedToIds.map(id => {
-                            const emp = employees.find(e => e.id === id || e.employeeId === id || e.userId === id);
-                            return (
-                              <span key={id} className="bg-primary/10 text-primary border border-primary/20 text-xs font-bold px-2.5 py-1 rounded-lg flex items-center gap-1.5">
-                                <User className="w-3 h-3 text-primary" />
-                                {emp?.name || id}
-                                <button type="button" onClick={() => setTaskForm({...taskForm, assignedToIds: taskForm.assignedToIds?.filter(i => i !== id)})} className="text-primary hover:text-destructive transition-colors mr-1">
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </span>
-                            );
-                         })}
-                       </div>
-                     )}
+                     {(() => {
+                       const uniqueAssignees = getTaskDistinctAssignees({ assignedToIds: taskForm.assignedToIds }, employees);
+                       if (uniqueAssignees.length === 0) return null;
+                       return (
+                         <div className="flex flex-wrap gap-1.5 mb-1.5">
+                           {uniqueAssignees.map(a => (
+                             <span key={a.id} className="bg-primary/10 text-primary border border-primary/20 text-xs font-bold px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                               <User className="w-3 h-3 text-primary" />
+                               {a.name}
+                               <button 
+                                 type="button" 
+                                 onClick={() => {
+                                   const remaining = (taskForm.assignedToIds || []).filter(rawId => {
+                                     const matched = findEmployeeByIdentifier(rawId, employees);
+                                     if (matched && a.employee && (matched.id === a.employee.id || matched.employeeId === a.employee.employeeId)) return false;
+                                     return String(rawId).trim().toLowerCase() !== String(a.id).trim().toLowerCase();
+                                   });
+                                   const normalizedRemaining = normalizeTaskAssigneeIds(remaining, employees);
+                                   setTaskForm({
+                                     ...taskForm, 
+                                     assignedToId: normalizedRemaining[0] || '',
+                                     assignedToIds: normalizedRemaining
+                                   });
+                                 }} 
+                                 className="text-primary hover:text-destructive transition-colors mr-1"
+                               >
+                                 <X className="w-3 h-3" />
+                               </button>
+                             </span>
+                           ))}
+                         </div>
+                       );
+                     })()}
                      
                      <select 
                         className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none text-right font-bold text-xs focus:ring-2 focus:ring-primary cursor-pointer" 
                         value="" 
                         onChange={(e) => {
                           const val = e.target.value;
-                          if (val && !taskForm.assignedToIds?.includes(val)) {
-                            setTaskForm({...taskForm, assignedToId: val, assignedToIds: [...(taskForm.assignedToIds || []), val]});
+                          if (!val) return;
+                          const currentNormalized = normalizeTaskAssigneeIds(taskForm.assignedToIds || [], employees);
+                          const targetEmp = findEmployeeByIdentifier(val, employees);
+                          const canonicalId = targetEmp?.id || targetEmp?.employeeId || val;
+                          
+                          // Check if already in list (by canonical ID or employee match)
+                          const alreadySelected = currentNormalized.some(id => {
+                            const emp = findEmployeeByIdentifier(id, employees);
+                            if (emp && targetEmp) {
+                              return emp.id === targetEmp.id || emp.employeeId === targetEmp.employeeId;
+                            }
+                            return String(id).toLowerCase() === String(canonicalId).toLowerCase();
+                          });
+
+                          if (!alreadySelected) {
+                            const updatedList = normalizeTaskAssigneeIds([...currentNormalized, canonicalId], employees);
+                            setTaskForm({
+                              ...taskForm, 
+                              assignedToId: updatedList[0] || '', 
+                              assignedToIds: updatedList
+                            });
                           }
                         }}
                      >
                         <option value="">{t('اختر موظف لإسناد المهمة إليه...')}</option>
-                        {employees.filter(e => !taskForm.assignedToIds?.includes(e.id)).map(e => <option key={e.id} value={e.id}>{e.name} ({e.jobTitle || 'موظف'})</option>)}
+                        {employees.filter(e => {
+                          const currentNormalized = normalizeTaskAssigneeIds(taskForm.assignedToIds || [], employees);
+                          return !currentNormalized.some(id => {
+                            const emp = findEmployeeByIdentifier(id, employees);
+                            if (emp) return emp.id === e.id || emp.employeeId === e.employeeId;
+                            return String(id).toLowerCase() === String(e.id).toLowerCase() || String(id).toLowerCase() === String(e.employeeId).toLowerCase();
+                          });
+                        }).map(e => <option key={e.id} value={e.id}>{e.name} ({e.jobTitle || 'موظف'})</option>)}
                      </select>
                   </div>
 
@@ -2350,14 +2841,13 @@ export const Operations: React.FC = () => {
                            <div className="flex items-center gap-2 text-xs font-black text-muted-foreground uppercase tracking-widest"><User className="w-4 h-4 text-primary"/>{t('المسؤولين والتكليف')}</div>
                            <div className="flex flex-wrap gap-1.5">
                              {(() => {
-                               const assignedIds = getTaskAssignedIds(viewingTask);
-                               if (assignedIds.length === 0) {
+                               const distinctAssignees = getTaskDistinctAssignees(viewingTask, employees);
+                               if (distinctAssignees.length === 0) {
                                  return <span className="text-muted-foreground font-medium text-xs">{t('غير محدد')}</span>;
                                }
-                               return assignedIds.map(id => {
-                                 const emp = employees.find(e => String(e.id) === String(id) || String(e.employeeId) === String(id) || (e.userId && String(e.userId) === String(id)));
-                                 return <span key={id} className="bg-primary/10 text-primary border border-primary/20 text-xs font-bold px-2.5 py-1 rounded-xl">{emp?.name || id}</span>;
-                               });
+                               return distinctAssignees.map(a => (
+                                 <span key={a.id} className="bg-primary/10 text-primary border border-primary/20 text-xs font-bold px-2.5 py-1 rounded-xl">{a.name}</span>
+                               ));
                              })()}
                            </div>
                         </div>
@@ -2766,11 +3256,10 @@ const TaskList: React.FC<{
                </div>
                <p className="text-[10px] font-black text-foreground">
                   {(() => {
-                    const aIds = getTaskAssignedIds(task);
-                    if (aIds.length > 0) {
-                      const firstEmp = employees.find(e => String(e.id) === String(aIds[0]) || String(e.employeeId) === String(aIds[0]));
-                      const name = firstEmp?.name || task.assignedTo || aIds[0];
-                      return aIds.length > 1 ? `${name} (+${aIds.length - 1})` : name;
+                    const distinct = getTaskDistinctAssignees(task, employees);
+                    if (distinct.length > 0) {
+                      const first = distinct[0];
+                      return distinct.length > 1 ? `${first.name} (+${distinct.length - 1})` : first.name;
                     }
                     return task.assignedTo || t('غير موجه');
                   })()}

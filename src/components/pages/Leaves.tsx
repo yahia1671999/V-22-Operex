@@ -445,7 +445,7 @@ export const Leaves: React.FC = () => {
       {/* Requests Table */}
       <div className="bg-card rounded-none border border-border shadow-sm overflow-hidden transition-colors">
         <div className="overflow-x-auto">
-          <table className="w-full text-right border-collapse">
+          <table className="w-full min-w-[750px] text-right border-collapse">
             <thead>
               <tr className="bg-muted border-b border-border text-xs font-black text-muted-foreground uppercase tracking-widest">
                 <th className="px-8 py-6 text-right">{t('الموظف')}</th>

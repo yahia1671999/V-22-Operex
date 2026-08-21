@@ -347,7 +347,7 @@ export const FinancialAdvances: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-right">
+            <table className="w-full min-w-[750px] text-right">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/40 text-slate-400 text-xs font-black uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
                   <th className="px-8 py-5">{t('الموظف المعني')}</th>

@@ -262,7 +262,7 @@ export const Settlements: React.FC = () => {
 
       {/* Result Table */}
       <div className="bg-card rounded-[2.5rem] border border-border shadow-sm overflow-hidden overflow-x-auto">
-        <table className="w-full text-right">
+        <table className="w-full min-w-[750px] text-right">
           <thead>
             <tr className="bg-muted border-b border-border">
               <th className="px-8 py-5 text-sm font-black text-muted-foreground">{t('الموظف')}</th>

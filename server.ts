@@ -3096,9 +3096,14 @@ async function startServer() {
         return res.status(400).json({ error: "لا يمكن تقديم تظلم على جزاء تم إلغاؤه رسمياً" });
       }
 
-      const currentUserName = req.user?.name || req.user?.email || 'الموظف';
       const now = new Date().toISOString();
       const today = now.split('T')[0];
+
+      if (pen.grievanceDeadlineDate && today > pen.grievanceDeadlineDate) {
+        return res.status(400).json({ error: `انتهت المهلة المحددة لتقديم التظلم على هذا الجزاء الإداري (${pen.grievanceDeadlineDate})` });
+      }
+
+      const currentUserName = req.user?.name || req.user?.email || 'الموظف';
 
       const existingAudit = Array.isArray(pen.auditTrail) ? pen.auditTrail : [];
       const newAuditEntry = {

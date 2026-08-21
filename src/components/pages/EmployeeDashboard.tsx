@@ -53,6 +53,8 @@ import { db, doc, updateDoc, addDoc, collection } from "../../api";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { usePermissions } from "../../hooks/usePermissions";
 import { formatTime12h, formatDateTime12h } from "../../utils/timeFormatter";
+import { normalizeTaskAssigneeIds, findEmployeeByIdentifier } from "../../lib/taskUtils";
+import { getGrievanceStatusInfo, calculateFutureDate } from "../../utils/penaltyWorkflow";
 
 export const EmployeeDashboard: React.FC = () => {
   const { user, profile } = useAuth();
@@ -118,6 +120,9 @@ export const EmployeeDashboard: React.FC = () => {
     submitting: false,
   });
 
+  const [showPenaltiesHistoryModal, setShowPenaltiesHistoryModal] = useState(false);
+  const [selectedPenaltyHistoryItem, setSelectedPenaltyHistoryItem] = useState<any | null>(null);
+
   const handleGrievanceSubmit = async () => {
     if (!grievanceModal.penalty || !grievanceModal.reason.trim()) {
       alert("يرجى كتابة أسباب وتفاصيل التظلم الإداري");
@@ -125,6 +130,12 @@ export const EmployeeDashboard: React.FC = () => {
     }
     if (grievanceModal.penalty.status === "Cancelled" || grievanceModal.penalty.status === "تم إلغاء الجزاء") {
       alert("لا يمكن تقديم تظلم على جزاء تم إلغاؤه رسمياً");
+      setGrievanceModal({ isOpen: false, penalty: null, reason: "", submitting: false });
+      return;
+    }
+    const gInfo = getGrievanceStatusInfo(grievanceModal.penalty);
+    if (gInfo.isExpired) {
+      alert(`عذراً، انتهت المهلة المحددة لتقديم التظلم على هذا الجزاء الإداري (${gInfo.gDeadline})`);
       setGrievanceModal({ isOpen: false, penalty: null, reason: "", submitting: false });
       return;
     }
@@ -1398,17 +1409,13 @@ export const EmployeeDashboard: React.FC = () => {
           ? assignTaskForm.projectId
           : undefined;
 
-      const assignedToIds = Array.from(
-        new Set(
-          [
-            targetEmpId,
-            targetEmpObj?.id,
-            targetEmpObj?.employeeId,
-            targetEmpObj?.userId,
-            targetEmpObj?.email?.trim().toLowerCase(),
-            targetEmpObj?.name?.trim().toLowerCase(),
-          ].filter(Boolean),
-        ),
+      const assignedToIds = normalizeTaskAssigneeIds(
+        [
+          targetEmpId,
+          targetEmpObj?.id,
+          targetEmpObj?.employeeId,
+        ].filter(Boolean) as string[],
+        employees
       );
 
       const newTask = {
@@ -1676,16 +1683,27 @@ export const EmployeeDashboard: React.FC = () => {
     return (penalties || []).filter((p) => isItemForTeam(p));
   }, [penalties, isItemForTeam]);
 
-  const myApprovedPenalties = useMemo(() => {
+  const allMyPenalties = useMemo(() => {
     if (!currentEmployeeId || currentEmployeeId === "default") return [];
     return (penalties || []).filter(
       (p) =>
         (p.employeeId === currentEmployeeId ||
          currentEmpIdentifiers.includes(String(p.employeeId || '').toLowerCase().trim())) &&
-        p.status !== "Draft" &&
-        p.status !== "Cancelled",
+        p.status !== "Draft",
     );
   }, [penalties, currentEmployeeId, currentEmpIdentifiers]);
+
+  const myApprovedPenalties = useMemo(() => {
+    return allMyPenalties.filter((p) => {
+      if (p.status === "Cancelled") return false;
+      const gInfo = getGrievanceStatusInfo(p);
+      // Hide from main dashboard screen once visibility duration has expired
+      if (gInfo.isVisibilityExpired) {
+        return false;
+      }
+      return true;
+    });
+  }, [allMyPenalties]);
 
   // Memoized employee evaluations & performance data
   const allMyEvaluations = useMemo(() => {
@@ -3160,249 +3178,349 @@ export const EmployeeDashboard: React.FC = () => {
         </div>
       </section>
 
-      {/* Approved Penalties warnings if any */}
-      {myApprovedPenalties.length > 0 && (
+      {/* Approved Penalties warnings if any or History entry */}
+      {(myApprovedPenalties.length > 0 || allMyPenalties.length > 0) && (
         <section className="space-y-4" dir={isRtl ? "rtl" : "ltr"}>
-          <div className="flex items-center gap-3 px-2">
-            <div className="w-8 h-8 bg-destructive/10 rounded-none flex items-center justify-center text-destructive">
-              <AlertTriangle className="w-5 h-5 animate-pulse" />
+          <div className="flex flex-wrap items-center justify-between gap-3 px-2">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-destructive/10 rounded-none flex items-center justify-center text-destructive">
+                <AlertTriangle className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-foreground uppercase tracking-widest">
+                  {isRtl
+                    ? t("التنبيهات الإدارية والجزاءات المعتمدة")
+                    : "Official Written Warnings & Approved Penalties"}
+                </h2>
+                <p className="text-[11px] text-muted-foreground font-semibold">
+                  {myApprovedPenalties.length > 0
+                    ? (isRtl ? `لديك ${myApprovedPenalties.length} جزاء ظاهر في لوحتك الرئيسية خلال مدة الظهور القانونية` : `You have ${myApprovedPenalties.length} active penalty warnings`)
+                    : (isRtl ? "لا توجد جزاءات نشطة حالياً، جميع الجزاءات السابقة محفوظة بالسجل التاريخي" : "No active penalties on main dashboard; all are preserved in history")}
+                </p>
+              </div>
             </div>
-            <h2 className="text-xl font-black text-foreground uppercase tracking-widest">
-              {isRtl
-                ? t("التنبيهات الإدارية والجزاءات المعتمدة")
-                : "Official Written Warnings & Approved Penalties"}
-            </h2>
+
+            {allMyPenalties.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowPenaltiesHistoryModal(true)}
+                className="px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border text-foreground font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <History className="w-3.5 h-3.5 text-indigo-600" />
+                <span>{isRtl ? `السجل التاريخي للجزاءات (${allMyPenalties.length})` : `Disciplinary History (${allMyPenalties.length})`}</span>
+              </button>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {myApprovedPenalties.map((penalty, idx) => {
-              const penaltyTypeName = isRtl
-                ? penalty.penaltyType === "Warning"
-                  ? t("لفت نظر إداري")
-                  : penalty.penaltyType === "Final Warning"
-                    ? t("إنذار نهائي شديد اللهجة")
-                    : penalty.penaltyType === "Day Deduction"
-                      ? t("جزاء خصم من الراتب (بالأيام)")
-                      : penalty.penaltyType === "Amount Deduction"
-                        ? t("خصم مالي مباشر من المستحقات")
-                        : penalty.penaltyType
-                : penalty.penaltyType === "Warning"
-                  ? "Official Written Warning"
-                  : penalty.penaltyType === "Final Warning"
-                    ? "Severe Final Warning"
-                    : penalty.penaltyType === "Day Deduction"
-                      ? "Salary Deduction (Days)"
-                      : penalty.penaltyType === "Amount Deduction"
-                        ? "Direct Financial Penalty"
-                        : penalty.penaltyType;
+          {myApprovedPenalties.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {myApprovedPenalties.map((penalty, idx) => {
+                const gInfo = getGrievanceStatusInfo(penalty);
 
-              const violationTypeName = isRtl
-                ? penalty.violationType === "Delay"
-                  ? t("تأخير غير مبرر عن العمل")
-                  : penalty.violationType === "Absence"
-                    ? t("غياب بدون إذن رسمي")
-                    : penalty.violationType === "Early Departure"
-                      ? t("انصراف مبكر قبل الموعد")
-                      : penalty.violationType === "Instruction Violation"
-                        ? t("مخالفة التعليمات الإدارية")
-                        : penalty.violationType === "Misconduct"
-                          ? t("سلوك غير مهني")
-                          : penalty.violationType === "Other"
-                            ? t("أخرى (حسب اللائحة الداخلية)")
-                            : penalty.violationType
-                : penalty.violationType === "Delay"
-                  ? "Unjustified Work Delay"
-                  : penalty.violationType === "Absence"
-                    ? "Absence Without Official Permission"
-                    : penalty.violationType === "Early Departure"
-                      ? "Early Departure Before Schedule"
-                      : penalty.violationType === "Instruction Violation"
-                        ? "Administrative Policy Non-Compliance"
-                        : penalty.violationType === "Misconduct"
-                          ? "Unprofessional Misconduct"
-                          : penalty.violationType === "Other"
-                            ? "Other Internal Policy Violation"
-                            : penalty.violationType;
+                const penaltyTypeName = isRtl
+                  ? penalty.penaltyType === "Warning"
+                    ? t("لفت نظر إداري")
+                    : penalty.penaltyType === "Final Warning"
+                      ? t("إنذار نهائي شديد اللهجة")
+                      : penalty.penaltyType === "Day Deduction"
+                        ? t("جزاء خصم من الراتب (بالأيام)")
+                        : penalty.penaltyType === "Amount Deduction"
+                          ? t("خصم مالي مباشر من المستحقات")
+                          : penalty.penaltyType
+                  : penalty.penaltyType === "Warning"
+                    ? "Official Written Warning"
+                    : penalty.penaltyType === "Final Warning"
+                      ? "Severe Final Warning"
+                      : penalty.penaltyType === "Day Deduction"
+                        ? "Salary Deduction (Days)"
+                        : penalty.penaltyType === "Amount Deduction"
+                          ? "Direct Financial Penalty"
+                          : penalty.penaltyType;
 
-              return (
-                <motion.div
-                  initial={{ y: 15, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: idx * 0.1 }}
-                  key={penalty.id}
-                  className={cn(
-                    "p-6 bg-red-600/[0.03] border-2 border-red-500/30 rounded-none hover:border-red-500 hover:bg-red-600/[0.05] transition-all relative flex flex-col justify-between shadow-[4px_4px_0px_0px_rgba(239,68,68,0.1)]",
-                    isRtl ? "text-right" : "text-left",
-                  )}
-                >
-                  <div>
-                    <div className="flex items-center justify-between border-b border-red-500/10 pb-3 mb-4">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 bg-red-500 rounded-full animate-ping" />
-                        <h3 className="text-base font-black text-red-600">
-                          {penaltyTypeName}
-                        </h3>
+                const violationTypeName = isRtl
+                  ? penalty.violationType === "Delay"
+                    ? t("تأخير غير مبرر عن العمل")
+                    : penalty.violationType === "Absence"
+                      ? t("غياب بدون إذن رسمي")
+                      : penalty.violationType === "Early Departure"
+                        ? t("انصراف مبكر قبل الموعد")
+                        : penalty.violationType === "Instruction Violation"
+                          ? t("مخالفة التعليمات الإدارية")
+                          : penalty.violationType === "Misconduct"
+                            ? t("سلوك غير مهني")
+                            : penalty.violationType === "Other"
+                              ? t("أخرى (حسب اللائحة الداخلية)")
+                              : penalty.violationType
+                  : penalty.violationType === "Delay"
+                    ? "Unjustified Work Delay"
+                    : penalty.violationType === "Absence"
+                      ? "Absence Without Official Permission"
+                      : penalty.violationType === "Early Departure"
+                        ? "Early Departure Before Schedule"
+                        : penalty.violationType === "Instruction Violation"
+                          ? "Administrative Policy Non-Compliance"
+                          : penalty.violationType === "Misconduct"
+                            ? "Unprofessional Misconduct"
+                            : penalty.violationType === "Other"
+                              ? "Other Internal Policy Violation"
+                              : penalty.violationType;
+
+                return (
+                  <motion.div
+                    initial={{ y: 15, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: idx * 0.1 }}
+                    key={penalty.id}
+                    className={cn(
+                      "p-6 bg-red-600/[0.03] border-2 border-red-500/30 rounded-none hover:border-red-500 hover:bg-red-600/[0.05] transition-all relative flex flex-col justify-between shadow-[4px_4px_0px_0px_rgba(239,68,68,0.1)]",
+                      isRtl ? "text-right" : "text-left",
+                    )}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between border-b border-red-500/10 pb-3 mb-4">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 bg-red-500 rounded-full animate-ping" />
+                          <h3 className="text-base font-black text-red-600">
+                            {penaltyTypeName}
+                          </h3>
+                        </div>
+                        <span className="text-[10px] bg-red-500 text-white font-black px-2.5 py-1 rounded-none uppercase tracking-wider">
+                          {isRtl ? t("رقم:") : "No:"} {penalty.penaltyNumber}
+                        </span>
                       </div>
-                      <span className="text-[10px] bg-red-500 text-white font-black px-2.5 py-1 rounded-none uppercase tracking-wider">
-                        {isRtl ? t("رقم:") : "No:"} {penalty.penaltyNumber}
-                      </span>
-                    </div>
 
-                    <div className="space-y-3 mb-6">
-                      <div className="grid grid-cols-2 gap-3 text-xs bg-muted/30 p-2.5 border border-border">
-                        <div>
-                          <span className="text-muted-foreground block text-[10px] font-bold mb-0.5">
+                      <div className="space-y-3 mb-4">
+                        <div className="grid grid-cols-2 gap-3 text-xs bg-muted/30 p-2.5 border border-border">
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] font-bold mb-0.5">
+                              {isRtl
+                                ? t("نوع المخالفة المرتكبة:")
+                                : "Committed Violation Type:"}
+                            </span>
+                            <span className="font-extrabold text-foreground">
+                              {violationTypeName}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] font-bold mb-0.5">
+                              {isRtl ? t("تاريخ المخالفة:") : "Violation Date:"}
+                            </span>
+                            <span className="font-extrabold text-foreground font-mono">
+                              {penalty.violationDate}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div
+                          className={cn(
+                            "p-3.5 bg-background",
+                            isRtl
+                              ? "border-r-4 border-red-500/70"
+                              : "border-l-4 border-red-500/70",
+                          )}
+                        >
+                          <span className="text-[10px] text-muted-foreground block font-bold mb-1">
                             {isRtl
-                              ? t("نوع المخالفة المرتكبة:")
-                              : "Committed Violation Type:"}
+                              ? t("تفاصيل ومبررات القرار الإداري:")
+                              : "Administrative Decision Details:"}
                           </span>
-                          <span className="font-extrabold text-foreground">
-                            {violationTypeName}
-                          </span>
+                          <p className="text-xs font-bold leading-relaxed text-foreground/90">
+                            {penalty.description}
+                          </p>
                         </div>
-                        <div>
-                          <span className="text-muted-foreground block text-[10px] font-bold mb-0.5">
-                            {isRtl ? t("تاريخ المخالفة:") : "Violation Date:"}
-                          </span>
-                          <span className="font-extrabold text-foreground font-mono">
-                            {penalty.violationDate}
-                          </span>
-                        </div>
-                      </div>
 
-                      <div
-                        className={cn(
-                          "p-3.5 bg-background",
-                          isRtl
-                            ? "border-r-4 border-red-500/70"
-                            : "border-l-4 border-red-500/70",
+                        {Number(penalty.deductionValue) > 0 && (
+                          <div className="flex items-center gap-2 text-xs bg-red-500/10 text-red-600 p-2.5 border border-red-500/20 font-extrabold">
+                            <AlertCircle className="w-4 h-4 text-red-500" />
+                            <span>
+                              {isRtl
+                                ? t("الجزاء المترتب: خصم قدره")
+                                : "Resulting Penalty: Deduction of"}{" "}
+                              <span className="font-black text-sm text-red-700 underline mx-1">
+                                {penalty.deductionValue}
+                              </span>{" "}
+                              {penalty.deductionType === "Amount"
+                                ? isRtl
+                                  ? t("ج.م")
+                                  : "EGP"
+                                : isRtl
+                                  ? t("أيام من الراتب الأساسي")
+                                  : "days from basic salary"}
+                            </span>
+                          </div>
                         )}
-                      >
-                        <span className="text-[10px] text-muted-foreground block font-bold mb-1">
-                          {isRtl
-                            ? t("تفاصيل ومبررات القرار الإداري:")
-                            : "Administrative Decision Details:"}
-                        </span>
-                        <p className="text-xs font-bold leading-relaxed text-foreground/90">
-                          {penalty.description}
-                        </p>
-                      </div>
 
-                      {Number(penalty.deductionValue) > 0 && (
-                        <div className="flex items-center gap-2 text-xs bg-red-500/10 text-red-600 p-2.5 border border-red-500/20 font-extrabold">
-                          <AlertCircle className="w-4 h-4 text-red-500" />
-                          <span>
-                            {isRtl
-                              ? t("الجزاء المترتب: خصم قدره")
-                              : "Resulting Penalty: Deduction of"}{" "}
-                            <span className="font-black text-sm text-red-700 underline mx-1">
-                              {penalty.deductionValue}
-                            </span>{" "}
-                            {penalty.deductionType === "Amount"
-                              ? isRtl
-                                ? t("ج.م")
-                                : "EGP"
-                              : isRtl
-                                ? t("أيام من الراتب الأساسي")
-                                : "days from basic salary"}
+                        {/* Grievance & Visibility Timeline Badges */}
+                        <div className="p-3 bg-muted/40 border border-border/80 space-y-2">
+                          <div className="flex items-center justify-between text-[11px] border-b border-border/60 pb-1.5">
+                            <span className="font-black text-foreground flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                              {isRtl ? "مواعيد التظلم والظهور باللوحة:" : "Grievance & Visibility Window:"}
+                            </span>
+                            <span className={cn(
+                              "px-2 py-0.5 text-[9px] font-black rounded-none border",
+                              gInfo.status === "submitted"
+                                ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/30"
+                                : gInfo.isAvailable
+                                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                                  : "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30"
+                            )}>
+                              {isRtl ? "حالة التظلم:" : "Grievance:"} {gInfo.status === "submitted" ? (isRtl ? "تم التقديم" : "Submitted") : (gInfo.isAvailable ? (isRtl ? "متاح" : "Available") : (isRtl ? "منتهي" : "Expired"))}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                            <div className="bg-card p-1.5 border border-border">
+                              <span className="text-muted-foreground block text-[9px] font-bold">
+                                {isRtl ? "بداية التظلم:" : "Start Date:"}
+                              </span>
+                              <span className="font-extrabold text-foreground font-mono">
+                                {gInfo.gStartDate}
+                              </span>
+                            </div>
+
+                            <div className="bg-card p-1.5 border border-border">
+                              <span className="text-muted-foreground block text-[9px] font-bold">
+                                {isRtl ? "آخر موعد للتظلم:" : "Deadline:"}
+                              </span>
+                              <span className={cn("font-extrabold font-mono", gInfo.isAvailable ? "text-emerald-600" : "text-rose-600")}>
+                                {gInfo.gDeadline}
+                              </span>
+                            </div>
+
+                            <div className="bg-card p-1.5 border border-border">
+                              <span className="text-muted-foreground block text-[9px] font-bold">
+                                {isRtl ? "حالة التظلم:" : "Status:"}
+                              </span>
+                              <span className={cn("font-black", gInfo.isAvailable ? "text-emerald-600" : (gInfo.status === "submitted" ? "text-indigo-600" : "text-rose-600"))}>
+                                {gInfo.status === "submitted"
+                                  ? (isRtl ? "تم التقديم" : "Submitted")
+                                  : gInfo.isAvailable
+                                    ? (isRtl ? `متاح (${gInfo.remainingGrievanceDays} يوم)` : `Available (${gInfo.remainingGrievanceDays}d)`)
+                                    : (isRtl ? "منتهي" : "Expired")}
+                              </span>
+                            </div>
+
+                            <div className="bg-card p-1.5 border border-border">
+                              <span className="text-muted-foreground block text-[9px] font-bold">
+                                {isRtl ? "انتهاء الظهور:" : "Visible Until:"}
+                              </span>
+                              <span className="font-extrabold text-foreground font-mono">
+                                {gInfo.vEndDate}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Grievance action & response section */}
+                    {penalty.hasGrievance ? (
+                      <div className="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-none text-xs space-y-2 mt-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-black text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+                            <Scale className="w-3.5 h-3.5 text-indigo-600" />
+                            {isRtl ? "التظلم الإداري المقدم:" : "Submitted Grievance:"}
+                          </span>
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-none bg-indigo-500/20 text-indigo-800 dark:text-indigo-300">
+                            {penalty.grievanceStatus === "Pending"
+                              ? isRtl ? "قيد دراسة HR" : "HR Under Review"
+                              : penalty.grievanceStatus === "Accepted_Modified"
+                                ? isRtl ? "مقبول وتم تعديل الجزاء" : "Accepted & Modified"
+                                : isRtl ? "مرفوض التظلم" : "Rejected"}
                           </span>
                         </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Grievance section */}
-                  {penalty.hasGrievance ? (
-                    <div className="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-none text-xs space-y-2 mt-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-black text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
-                          <Scale className="w-3.5 h-3.5 text-indigo-600" />
-                          {isRtl ? "التظلم الإداري المقدم:" : "Submitted Grievance:"}
-                        </span>
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-none bg-indigo-500/20 text-indigo-800 dark:text-indigo-300">
-                          {penalty.grievanceStatus === "Pending"
-                            ? isRtl ? "قيد دراسة HR" : "HR Under Review"
-                            : penalty.grievanceStatus === "Accepted_Modified"
-                              ? isRtl ? "مقبول وتم تعديل الجزاء" : "Accepted & Modified"
-                              : isRtl ? "مرفوض التظلم" : "Rejected"}
-                        </span>
-                      </div>
-                      <p className="text-foreground text-[11px] font-medium">
-                        <strong>{isRtl ? "سبب التظلم:" : "Reason:"}</strong> {penalty.grievanceReason}
-                      </p>
-                      {penalty.grievanceReply && (
-                        <div className="pt-1.5 border-t border-indigo-500/20 text-indigo-900 dark:text-indigo-200 text-[11px]">
-                          <strong>{isRtl ? "رد وقرار إدارة الموارد البشرية:" : "HR Decision:"}</strong> {penalty.grievanceReply}
-                        </div>
-                      )}
-                      {penalty.grievanceStatus === "Accepted_Modified" && (
-                        <div className="p-2 bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold space-y-1">
-                          <div className="text-muted-foreground">
-                            {isRtl ? "الجزاء قبل التظلم:" : "Original Penalty:"} {penalty.preGrievancePenaltyType || "-"} ({penalty.preGrievanceDeductionValue || 0} {penalty.preGrievanceDeductionType === "Days" ? (isRtl ? "يوم" : "days") : (isRtl ? "ج.م" : "EGP")})
+                        <p className="text-foreground text-[11px] font-medium">
+                          <strong>{isRtl ? "سبب التظلم:" : "Reason:"}</strong> {penalty.grievanceReason}
+                        </p>
+                        {penalty.grievanceReply && (
+                          <div className="pt-1.5 border-t border-indigo-500/20 text-indigo-900 dark:text-indigo-200 text-[11px]">
+                            <strong>{isRtl ? "رد وقرار إدارة الموارد البشرية:" : "HR Decision:"}</strong> {penalty.grievanceReply}
                           </div>
-                          <div className="text-emerald-700 dark:text-emerald-400 font-black">
-                            {isRtl ? "الجزاء المعتمد بعد قبول التظلم:" : "Approved Penalty after Grievance:"} {penalty.postGrievancePenaltyType || penalty.penaltyType} ({penalty.postGrievanceDeductionValue ?? penalty.deductionValue} {penalty.deductionType === "Days" ? (isRtl ? "يوم" : "days") : (isRtl ? "ج.م" : "EGP")})
+                        )}
+                        {penalty.grievanceStatus === "Accepted_Modified" && (
+                          <div className="p-2 bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold space-y-1">
+                            <div className="text-muted-foreground">
+                              {isRtl ? "الجزاء قبل التظلم:" : "Original Penalty:"} {penalty.preGrievancePenaltyType || "-"} ({penalty.preGrievanceDeductionValue || 0} {penalty.preGrievanceDeductionType === "Days" ? (isRtl ? "يوم" : "days") : (isRtl ? "ج.م" : "EGP")})
+                            </div>
+                            <div className="text-emerald-700 dark:text-emerald-400 font-black">
+                              {isRtl ? "الجزاء المعتمد بعد قبول التظلم:" : "Approved Penalty after Grievance:"} {penalty.postGrievancePenaltyType || penalty.penaltyType} ({penalty.postGrievanceDeductionValue ?? penalty.deductionValue} {penalty.deductionType === "Days" ? (isRtl ? "يوم" : "days") : (isRtl ? "ج.م" : "EGP")})
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : penalty.status === "Cancelled" || penalty.status === "تم إلغاء الجزاء" ? (
-                    <div className="pt-2">
-                      <div className="p-2.5 bg-slate-500/10 border border-slate-500/20 text-[11px] text-slate-600 dark:text-slate-400 font-bold flex items-center justify-between">
-                        <span className="flex items-center gap-1.5">
-                          <Check className="w-3.5 h-3.5 text-slate-500" />
-                          {isRtl ? "تم إلغاء هذا الجزاء رسمياً" : "This penalty has been officially cancelled"}
-                        </span>
-                        <span className="text-[10px] px-2 py-0.5 bg-slate-500/20 text-slate-700 dark:text-slate-300 font-black">
-                          {isRtl ? "تم إلغاء الجزاء" : "Cancelled"}
-                        </span>
+                        )}
                       </div>
-                    </div>
-                  ) : (
-                    <div className="pt-2">
-                      <button
-                        onClick={() => {
-                          setGrievanceModal({
-                            isOpen: true,
-                            penalty: penalty,
-                            reason: "",
-                            submitting: false,
-                          });
-                        }}
-                        className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-none text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
-                      >
-                        <Scale className="w-3.5 h-3.5" />
-                        <span>{isRtl ? "تقديم تظلم إداري رسمي على هذا الجزاء" : "Submit Formal Disciplinary Grievance"}</span>
-                      </button>
-                    </div>
-                  )}
+                    ) : penalty.status === "Cancelled" || penalty.status === "تم إلغاء الجزاء" ? (
+                      <div className="pt-2">
+                        <div className="p-2.5 bg-slate-500/10 border border-slate-500/20 text-[11px] text-slate-600 dark:text-slate-400 font-bold flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Check className="w-3.5 h-3.5 text-slate-500" />
+                            {isRtl ? "تم إلغاء هذا الجزاء رسمياً" : "This penalty has been officially cancelled"}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 bg-slate-500/20 text-slate-700 dark:text-slate-300 font-black">
+                            {isRtl ? "تم إلغاء الجزاء" : "Cancelled"}
+                          </span>
+                        </div>
+                      </div>
+                    ) : gInfo.isExpired ? (
+                      /* Grievance deadline expired -> disable/hide button automatically */
+                      <div className="pt-2">
+                        <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-700 dark:text-rose-300 font-bold flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-rose-500" />
+                            {isRtl ? "انتهت المهلة المحددة لتقديم التظلم الإداري على هذا الجزاء" : "The deadline for filing a grievance on this penalty has expired"}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 bg-rose-500/20 text-rose-800 dark:text-rose-200 font-black">
+                            {isRtl ? "التظلم منتهي" : "Grievance Expired"}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Grievance is available */
+                      <div className="pt-2">
+                        <button
+                          onClick={() => {
+                            setGrievanceModal({
+                              isOpen: true,
+                              penalty: penalty,
+                              reason: "",
+                              submitting: false,
+                            });
+                          }}
+                          className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-none text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                        >
+                          <Scale className="w-3.5 h-3.5" />
+                          <span>{isRtl ? `تقديم تظلم إداري رسمي (متاح - متبقي ${gInfo.remainingGrievanceDays} يوم)` : `Submit Formal Grievance (${gInfo.remainingGrievanceDays} days left)`}</span>
+                        </button>
+                      </div>
+                    )}
 
-                  <div className="flex items-center justify-between text-[10px] font-black tracking-widest text-muted-foreground border-t border-border/60 pt-3">
-                    <span>
-                      {isRtl ? t("تاريخ صدور العقوبة:") : "Issue Date:"}{" "}
-                      <span className="font-mono text-foreground">
-                        {penalty.penaltyDate}
+                    <div className="flex items-center justify-between text-[10px] font-black tracking-widest text-muted-foreground border-t border-border/60 pt-3 mt-3">
+                      <span>
+                        {isRtl ? t("تاريخ صدور العقوبة:") : "Issue Date:"}{" "}
+                        <span className="font-mono text-foreground">
+                          {penalty.penaltyDate}
+                        </span>
                       </span>
-                    </span>
-                    <span className={cn(
-                      "px-2 py-0.5 font-bold rounded-none uppercase text-[10px] border",
-                      penalty.status === "Approved"
-                        ? "text-emerald-600 bg-emerald-500/10 border-emerald-500/25"
-                        : penalty.status === "Cancelled"
-                          ? "text-slate-600 bg-slate-500/10 border-slate-500/25"
-                          : "text-amber-600 bg-amber-500/10 border-amber-500/25"
-                    )}>
-                      {penalty.status === "Approved"
-                        ? (isRtl ? t("معتمد كلياً") : "Fully Approved")
-                        : penalty.status === "Cancelled"
-                          ? (isRtl ? t("تم إلغاء الجزاء") : "Penalty Cancelled")
-                          : (isRtl ? t("قيد المراجعة") : "Under Review")}
-                    </span>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
+                      <span className={cn(
+                        "px-2 py-0.5 font-bold rounded-none uppercase text-[10px] border",
+                        penalty.status === "Approved"
+                          ? "text-emerald-600 bg-emerald-500/10 border-emerald-500/25"
+                          : penalty.status === "Cancelled"
+                            ? "text-slate-600 bg-slate-500/10 border-slate-500/25"
+                            : "text-amber-600 bg-amber-500/10 border-amber-500/25"
+                      )}>
+                        {penalty.status === "Approved"
+                          ? (isRtl ? t("معتمد كلياً") : "Fully Approved")
+                          : penalty.status === "Cancelled"
+                            ? (isRtl ? t("تم إلغاء الجزاء") : "Penalty Cancelled")
+                            : (isRtl ? t("قيد المراجعة") : "Under Review")}
+                      </span>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
 
@@ -9434,6 +9552,141 @@ export const EmployeeDashboard: React.FC = () => {
               >
                 <Scale className="w-4 h-4" />
                 <span>{grievanceModal.submitting ? (isRtl ? "جاري الإرسال..." : "Submitting...") : (isRtl ? "إرسال التظلم لـ HR" : "Submit to HR")}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disciplinary Penalties History Modal */}
+      {showPenaltiesHistoryModal && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in" dir={isRtl ? "rtl" : "ltr"}>
+          <div className="bg-card w-full max-w-4xl max-h-[90vh] flex flex-col border-2 border-indigo-500 rounded-none shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-border bg-muted/30">
+              <div className="flex items-center gap-2.5">
+                <History className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h3 className="text-base font-black text-foreground">
+                    {isRtl ? "السجل التاريخي للجزاءات والتنبيهات الإدارية" : "Historical Disciplinary Record"}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {isRtl ? "أرشيف كامل لجميع التنبيهات والجزاءات المسجلة وحالة التظلمات عبر الفترات" : "Complete archive of all recorded penalties, notices, and grievance statuses"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowPenaltiesHistoryModal(false);
+                  setSelectedPenaltyHistoryItem(null);
+                }}
+                className="text-muted-foreground hover:text-foreground cursor-pointer p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {allMyPenalties.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground font-bold">
+                  {isRtl ? "لا توجد أي جزاءات أو مخالفات مسجلة في سجلك التاريخي" : "No disciplinary records found in your historical archive"}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {allMyPenalties.map((pen: any) => {
+                    const gInfo = getGrievanceStatusInfo(pen);
+                    return (
+                      <div
+                        key={pen.id}
+                        className={cn(
+                          "p-4 border transition-all text-xs space-y-3",
+                          gInfo.isVisibilityExpired
+                            ? "bg-muted/30 border-border"
+                            : "bg-card border-indigo-500/40 shadow-xs"
+                        )}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-muted-foreground">#{pen.penaltyNumber || pen.id}</span>
+                            <span className="font-black text-foreground text-sm">{pen.penaltyType}</span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-none bg-muted font-bold text-muted-foreground">
+                              {pen.violationType}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={cn(
+                              "px-2 py-0.5 text-[10px] font-black rounded-none border",
+                              !gInfo.isVisibilityExpired
+                                ? "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30"
+                                : "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/30"
+                            )}>
+                              {!gInfo.isVisibilityExpired
+                                ? (isRtl ? "نشط باللوحة" : "Active on Dashboard")
+                                : (isRtl ? "محفوظ بالسجل التاريخي" : "Archived in History")}
+                            </span>
+                            <span className={cn(
+                              "px-2 py-0.5 text-[10px] font-black rounded-none border",
+                              pen.status === "Approved"
+                                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                                : pen.status === "Cancelled"
+                                  ? "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/30"
+                                  : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                            )}>
+                              {pen.status === "Approved" ? (isRtl ? "معتمد" : "Approved") : pen.status === "Cancelled" ? (isRtl ? "ملغى" : "Cancelled") : (isRtl ? "قيد المراجعة" : "Under Review")}
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="text-foreground leading-relaxed font-medium bg-background p-2.5 border border-border/60">
+                          {pen.description}
+                        </p>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                          <div className="bg-muted/40 p-2 border border-border">
+                            <span className="text-muted-foreground block font-bold">{isRtl ? "تاريخ الجزاء:" : "Date:"}</span>
+                            <span className="font-extrabold font-mono text-foreground">{pen.penaltyDate}</span>
+                          </div>
+                          <div className="bg-muted/40 p-2 border border-border">
+                            <span className="text-muted-foreground block font-bold">{isRtl ? "بداية التظلم:" : "Grievance Start:"}</span>
+                            <span className="font-extrabold font-mono text-foreground">{gInfo.gStartDate}</span>
+                          </div>
+                          <div className="bg-muted/40 p-2 border border-border">
+                            <span className="text-muted-foreground block font-bold">{isRtl ? "آخر موعد للتظلم:" : "Deadline:"}</span>
+                            <span className={cn("font-extrabold font-mono", gInfo.isAvailable ? "text-emerald-600" : "text-rose-600")}>
+                              {gInfo.gDeadline}
+                            </span>
+                          </div>
+                          <div className="bg-muted/40 p-2 border border-border">
+                            <span className="text-muted-foreground block font-bold">{isRtl ? "انتهاء الظهور:" : "Visibility End:"}</span>
+                            <span className="font-extrabold font-mono text-foreground">{gInfo.vEndDate}</span>
+                          </div>
+                        </div>
+
+                        {pen.hasGrievance && (
+                          <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 text-[11px] space-y-1">
+                            <div className="font-black text-indigo-900 dark:text-indigo-200">
+                              {isRtl ? "التظلم المقدم:" : "Submitted Grievance:"} {pen.grievanceReason}
+                            </div>
+                            {pen.grievanceReply && (
+                              <div className="text-foreground">
+                                <strong>{isRtl ? "رد الموارد البشرية:" : "HR Reply:"}</strong> {pen.grievanceReply}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-border bg-muted/20 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPenaltiesHistoryModal(false)}
+                className="px-5 py-2 bg-foreground text-background font-bold text-xs hover:opacity-90 cursor-pointer"
+              >
+                {isRtl ? "إغلاق" : "Close"}
               </button>
             </div>
           </div>
