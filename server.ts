@@ -3355,7 +3355,11 @@ async function startServer() {
         updatePayload.estimatedHours = Number(req.body.estimatedHours) || 0;
       }
       if (req.body.workflowLog !== undefined) {
-        updatePayload.workflowLog = req.body.workflowLog;
+        let wf = req.body.workflowLog;
+        if (typeof wf === 'string') {
+          try { wf = JSON.parse(wf); } catch(e) {}
+        }
+        updatePayload.workflowLog = wf;
       }
 
       const updated = await db.update(schema.projectTasks)
@@ -3457,6 +3461,16 @@ async function startServer() {
         }
       }
 
+      if (typeof data.workflowLog === 'string') {
+        try { data.workflowLog = JSON.parse(data.workflowLog); } catch(e) {}
+      }
+      if (typeof data.subTasks === 'string') {
+        try { data.subTasks = JSON.parse(data.subTasks); } catch(e) {}
+      }
+      if (typeof data.comments === 'string') {
+        try { data.comments = JSON.parse(data.comments); } catch(e) {}
+      }
+
       const updated = await db.update(schema.projectTasks)
         .set({ ...data, updatedAt: new Date().toISOString() })
         .where(eq(schema.projectTasks.id, id))
@@ -3540,6 +3554,27 @@ async function startServer() {
       }
 
       data.creatorId = employeeId || req.user?.id || null;
+
+      if (typeof data.workflowLog === 'string') {
+        try { data.workflowLog = JSON.parse(data.workflowLog); } catch(e) {}
+      }
+      if (!data.workflowLog || !Array.isArray(data.workflowLog) || data.workflowLog.length === 0) {
+        data.workflowLog = [{
+          fromStatus: 'Pending',
+          toStatus: data.status || 'Pending',
+          userId: req.user?.id || employeeId || 'system',
+          userName: req.user?.name || req.user?.email || 'المستخدم',
+          timestamp: new Date().toISOString(),
+          note: data.isPersonal ? 'إنشاء التزام شخصي' : 'إنشاء وتكليف بالمهمة'
+        }];
+      }
+      if (typeof data.subTasks === 'string') {
+        try { data.subTasks = JSON.parse(data.subTasks); } catch(e) {}
+      }
+      if (typeof data.comments === 'string') {
+        try { data.comments = JSON.parse(data.comments); } catch(e) {}
+      }
+
       const inserted = await db.insert(schema.projectTasks).values(data).returning();
 
       // Collect target assignees for instant notifications

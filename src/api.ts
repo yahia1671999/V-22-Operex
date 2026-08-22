@@ -266,7 +266,20 @@ export const updateDoc = async (docRef: { collection: string, id: string }, data
       for (const key in finalData) {
         if (finalData[key] && finalData[key].__type === 'arrayUnion') {
           const val = finalData[key].value;
-          const currentArr = Array.isArray(existingData[key]) ? existingData[key] : [];
+          let currentArr: any[] = [];
+          if (Array.isArray(existingData[key])) {
+            currentArr = existingData[key];
+          } else if (typeof existingData[key] === 'string') {
+            try {
+              const parsed = JSON.parse(existingData[key]);
+              if (Array.isArray(parsed)) currentArr = parsed;
+              else if (parsed && typeof parsed === 'object') currentArr = [parsed];
+            } catch {
+              if (existingData[key].trim()) currentArr = [{ note: existingData[key] }];
+            }
+          } else if (existingData[key] && typeof existingData[key] === 'object') {
+            currentArr = [existingData[key]];
+          }
           finalData[key] = [...currentArr, val];
         }
       }

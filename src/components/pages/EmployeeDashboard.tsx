@@ -53,7 +53,7 @@ import { db, doc, updateDoc, addDoc, collection } from "../../api";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { usePermissions } from "../../hooks/usePermissions";
 import { formatTime12h, formatDateTime12h } from "../../utils/timeFormatter";
-import { normalizeTaskAssigneeIds, findEmployeeByIdentifier } from "../../lib/taskUtils";
+import { normalizeTaskAssigneeIds, findEmployeeByIdentifier, safeParseWorkflowLog } from "../../lib/taskUtils";
 import { getGrievanceStatusInfo, calculateFutureDate } from "../../utils/penaltyWorkflow";
 
 export const EmployeeDashboard: React.FC = () => {
@@ -1111,9 +1111,7 @@ export const EmployeeDashboard: React.FC = () => {
       }
 
       if (item.source === "projectTask") {
-        const existingLogs = Array.isArray(item.workflowLog)
-          ? item.workflowLog
-          : [];
+        const existingLogs = safeParseWorkflowLog(item.workflowLog);
         const newLog = {
           fromStatus: item.status || "Pending",
           toStatus: targetStatus,
@@ -1290,9 +1288,7 @@ export const EmployeeDashboard: React.FC = () => {
     setIsSavingTaskEdit(true);
     try {
       if (viewingTaskDetail.source === "projectTask") {
-        const existingLogs = Array.isArray(viewingTaskDetail.workflowLog)
-          ? viewingTaskDetail.workflowLog
-          : [];
+        const existingLogs = safeParseWorkflowLog(viewingTaskDetail.workflowLog);
         const newStatus = reopen
           ? "In Progress"
           : viewingTaskDetail.status || "Pending";
@@ -1513,9 +1509,7 @@ export const EmployeeDashboard: React.FC = () => {
         }
       }
 
-      const existingLogs = Array.isArray(existingTask?.workflowLog)
-        ? existingTask.workflowLog
-        : [];
+      const existingLogs = safeParseWorkflowLog(existingTask?.workflowLog);
       const newLog = {
         fromStatus: existingTask?.status || "Unknown",
         toStatus: newStatus,
@@ -2379,9 +2373,7 @@ export const EmployeeDashboard: React.FC = () => {
       const taskId = eventId.replace("task-", "");
       try {
         const existingTask = (projectTasks || []).find((t) => t.id === taskId);
-        const existingLogs = Array.isArray(existingTask?.workflowLog)
-          ? existingTask.workflowLog
-          : [];
+        const existingLogs = safeParseWorkflowLog(existingTask?.workflowLog);
         const newLog = {
           fromStatus: existingTask?.status || "Unknown",
           toStatus: "Approved",
@@ -9390,15 +9382,17 @@ export const EmployeeDashboard: React.FC = () => {
                   </div>
 
                   {/* Workflow Log / Manager Guidance History */}
-                  {Array.isArray(viewingTaskDetail.workflowLog) &&
-                    viewingTaskDetail.workflowLog.length > 0 && (
+                  {(() => {
+                    const taskLogs = safeParseWorkflowLog(viewingTaskDetail.workflowLog);
+                    if (taskLogs.length === 0) return null;
+                    return (
                       <div className="space-y-2 border-t border-border pt-3">
                         <h5 className="text-xs font-black text-foreground flex items-center gap-1">
                           <Compass className="w-3.5 h-3.5 text-primary" />
                           <span>توجيهات وملاحظات المدير المباشر:</span>
                         </h5>
                         <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                          {viewingTaskDetail.workflowLog.map(
+                          {taskLogs.map(
                             (log: any, idx: number) => (
                               <div
                                 key={idx}
@@ -9422,7 +9416,8 @@ export const EmployeeDashboard: React.FC = () => {
                           )}
                         </div>
                       </div>
-                    )}
+                    );
+                  })()}
                 </div>
               )}
             </div>

@@ -32,6 +32,8 @@ import {
   Lock,
   Plane,
   Edit2,
+  Edit3,
+  History,
   Save,
   Folder,
   Calendar,
@@ -55,8 +57,10 @@ import {
   normalizeTaskAssigneeIds, 
   findEmployeeByIdentifier,
   getCurrentProjectPhase,
-  getProjectPhaseDetails
+  getProjectPhaseDetails,
+  safeParseWorkflowLog
 } from '../../lib/taskUtils';
+import { getValidParentTasks, isParentTaskIdValid, getTaskHierarchyInfo } from '../../utils/taskHierarchyUtils';
 import { Project, ProjectTask, ProjectStatus, TaskStatus, ProjectPhase, WorkflowLog, Employee, SubTask, TaskChatMessage, ProjectVisit } from '../../types';
 import { cn } from '../../lib/utils';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -96,6 +100,43 @@ export const Operations: React.FC = () => {
   const [subTaskTitle, setSubTaskTitle] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [taskParentSearch, setTaskParentSearch] = useState('');
+
+  // Task Editing State (تعديل بيانات المهمة بعد الإنشاء)
+  const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
+  const [isEditTaskModalOpen, setIsEditTaskModalOpen] = useState(false);
+  const [isSavingTaskEdit, setIsSavingTaskEdit] = useState(false);
+  const [editTaskParentSearch, setEditTaskParentSearch] = useState('');
+  const [editTaskForm, setEditTaskForm] = useState<{
+    title: string;
+    description: string;
+    projectId: string;
+    phase: string;
+    subPhase: string;
+    priority: string;
+    assignedToIds: string[];
+    startDate: string;
+    endDate: string;
+    estimatedHours: number | string;
+    status: TaskStatus;
+    completedAt: string;
+    parentTaskId: string;
+    editReason: string;
+  }>({
+    title: '',
+    description: '',
+    projectId: '',
+    phase: '',
+    subPhase: 'General',
+    priority: 'Medium',
+    assignedToIds: [],
+    startDate: '',
+    endDate: '',
+    estimatedHours: 0,
+    status: 'Pending',
+    completedAt: '',
+    parentTaskId: '',
+    editReason: ''
+  });
 
   // Scope editing state
   const [addExistingProjectScopeInput, setAddExistingProjectScopeInput] = useState('');
@@ -231,6 +272,60 @@ export const Operations: React.FC = () => {
   const selectedProject = useMemo(() => 
     projects.find(p => p.id === selectedProjectId), 
   [projects, selectedProjectId]);
+
+  // Valid Parent Tasks for Task Creation (Filtered strictly by same Project, Phase, and Scope/WBS)
+  const availableParentTasksForCreation = useMemo(() => {
+    const currentProjId = selectedProjectId || (taskForm as any).projectId || '';
+    const currentPhase = taskForm.phase || '';
+    const currentScope = taskForm.subPhase || 'General';
+    const projObj = projects.find(p => p.id === currentProjId) || selectedProject;
+
+    return getValidParentTasks(
+      projectTasks,
+      currentProjId,
+      currentPhase,
+      currentScope,
+      null,
+      projObj
+    );
+  }, [projectTasks, selectedProjectId, (taskForm as any).projectId, taskForm.phase, taskForm.subPhase, projects, selectedProject]);
+
+  // Valid Parent Tasks for Task Editing (Filtered strictly by same Project, Phase, and Scope/WBS without self or circular links)
+  const availableParentTasksForEdit = useMemo(() => {
+    if (!editingTask) return [];
+    const currentProjId = editTaskForm.projectId || editingTask.projectId || '';
+    const currentPhase = editTaskForm.phase || '';
+    const currentScope = editTaskForm.subPhase || 'General';
+    const projObj = projects.find(p => p.id === currentProjId) || selectedProject;
+
+    return getValidParentTasks(
+      projectTasks,
+      currentProjId,
+      currentPhase,
+      currentScope,
+      editingTask.id,
+      projObj
+    );
+  }, [projectTasks, editingTask, editTaskForm.projectId, editTaskForm.phase, editTaskForm.subPhase, projects, selectedProject]);
+
+  // Automatically ensure parentTaskId is cleared if user changes phase or scope to something incompatible
+  useEffect(() => {
+    if (isTaskModalOpen && taskForm.parentTaskId) {
+      const isValid = availableParentTasksForCreation.some(t => t.id === taskForm.parentTaskId);
+      if (!isValid) {
+        setTaskForm(prev => ({ ...prev, parentTaskId: undefined }));
+      }
+    }
+  }, [isTaskModalOpen, availableParentTasksForCreation, taskForm.parentTaskId]);
+
+  useEffect(() => {
+    if (isEditTaskModalOpen && editTaskForm.parentTaskId) {
+      const isValid = availableParentTasksForEdit.some(t => t.id === editTaskForm.parentTaskId);
+      if (!isValid) {
+        setEditTaskForm(prev => ({ ...prev, parentTaskId: '' }));
+      }
+    }
+  }, [isEditTaskModalOpen, availableParentTasksForEdit, editTaskForm.parentTaskId]);
 
   const [savingVisitDate, setSavingVisitDate] = useState<string | null>(null);
 
@@ -1083,6 +1178,148 @@ export const Operations: React.FC = () => {
       await refreshData();
     } catch (error) {
       console.error('Error updating task status:', error);
+    }
+  };
+
+  const handleOpenEditTask = (taskToEdit: ProjectTask) => {
+    const rawAssigned = getTaskAssignedIds(taskToEdit);
+    const normalizedAssignees = normalizeTaskAssigneeIds(rawAssigned, employees);
+    
+    setEditingTask(taskToEdit);
+    setEditTaskForm({
+      title: taskToEdit.title || '',
+      description: taskToEdit.description || '',
+      projectId: taskToEdit.projectId || '',
+      phase: taskToEdit.phase || '',
+      subPhase: taskToEdit.subPhase || 'General',
+      priority: taskToEdit.priority || 'Medium',
+      assignedToIds: normalizedAssignees,
+      startDate: taskToEdit.startDate || '',
+      endDate: taskToEdit.endDate || (taskToEdit as any).dueDate || '',
+      estimatedHours: taskToEdit.estimatedHours || 0,
+      status: taskToEdit.status || 'Pending',
+      completedAt: taskToEdit.completedAt || '',
+      parentTaskId: taskToEdit.parentTaskId || '',
+      editReason: ''
+    });
+    setEditTaskParentSearch('');
+    setIsEditTaskModalOpen(true);
+  };
+
+  const handleSaveEditedTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !editingTask || isSavingTaskEdit) return;
+    if (!editTaskForm.title.trim()) {
+      alert(t('يرجى كتابة عنوان المهمة'));
+      return;
+    }
+
+    setIsSavingTaskEdit(true);
+    try {
+      const normalizedAssigneeIds = normalizeTaskAssigneeIds(editTaskForm.assignedToIds || [], employees);
+      const primaryEmp = normalizedAssigneeIds.length > 0 ? findEmployeeByIdentifier(normalizedAssigneeIds[0], employees) : undefined;
+      const assignedToName = primaryEmp?.name || (normalizedAssigneeIds.length > 0 ? normalizedAssigneeIds[0] : '');
+      const assignedToId = primaryEmp?.id || primaryEmp?.employeeId || (normalizedAssigneeIds.length > 0 ? normalizedAssigneeIds[0] : null);
+
+      // Compare fields and build detailed audit log
+      const changes: string[] = [];
+      if (editTaskForm.title.trim() !== (editingTask.title || '').trim()) {
+        changes.push(`العنوان: من "${editingTask.title}" إلى "${editTaskForm.title.trim()}"`);
+      }
+      if ((editTaskForm.phase || '') !== (editingTask.phase || '')) {
+        changes.push(`المرحلة: من "${editingTask.phase || 'غير محددة'}" إلى "${editTaskForm.phase || 'غير محددة'}"`);
+      }
+      if ((editTaskForm.subPhase || 'General') !== (editingTask.subPhase || 'General')) {
+        changes.push(`نطاق العمل: من "${editingTask.subPhase || 'General'}" إلى "${editTaskForm.subPhase || 'General'}"`);
+      }
+      
+      const oldAssignees = getTaskDistinctAssignees(editingTask, employees).map(a => a.name).sort().join(', ');
+      const newAssignees = getTaskDistinctAssignees({ assignedToIds: normalizedAssigneeIds }, employees).map(a => a.name).sort().join(', ');
+      if (oldAssignees !== newAssignees) {
+        changes.push(`المسؤولين: من [${oldAssignees || 'غير محدد'}] إلى [${newAssignees || 'غير محدد'}]`);
+      }
+
+      if ((editTaskForm.startDate || '') !== (editingTask.startDate || '')) {
+        changes.push(`تاريخ البداية: من "${editingTask.startDate || 'غير محدد'}" إلى "${editTaskForm.startDate || 'غير محدد'}"`);
+      }
+      const oldEndDate = editingTask.endDate || (editingTask as any).dueDate || '';
+      if ((editTaskForm.endDate || '') !== oldEndDate) {
+        changes.push(`تاريخ الاستحقاق/النهاية: من "${oldEndDate || 'غير محدد'}" إلى "${editTaskForm.endDate || 'غير محدد'}"`);
+      }
+      if (Number(editTaskForm.estimatedHours || 0) !== Number(editingTask.estimatedHours || 0)) {
+        changes.push(`الوقت المقدر: من "${editingTask.estimatedHours || 0} س" إلى "${editTaskForm.estimatedHours || 0} س"`);
+      }
+      if (editTaskForm.status !== editingTask.status) {
+        changes.push(`الحالة: من "${editingTask.status}" إلى "${editTaskForm.status}"`);
+      }
+      if ((editTaskForm.description || '').trim() !== (editingTask.description || '').trim()) {
+        changes.push(`تحديث وصف المهمة`);
+      }
+      if ((editTaskForm.priority || 'Medium') !== (editingTask.priority || 'Medium')) {
+        changes.push(`الأولوية: من "${editingTask.priority || 'Medium'}" إلى "${editTaskForm.priority || 'Medium'}"`);
+      }
+      if ((editTaskForm.parentTaskId || '') !== (editingTask.parentTaskId || '')) {
+        changes.push(`المهمة الرئيسية: من "${editingTask.parentTaskId || 'مستقلة'}" إلى "${editTaskForm.parentTaskId || 'مستقلة'}"`);
+      }
+
+      // Completion date and historical preservation
+      const isNowCompleted = editTaskForm.status === 'Completed' || editTaskForm.status === 'Executed' || editTaskForm.status === 'Approved';
+      const wasCompleted = editingTask.status === 'Completed' || editingTask.status === 'Executed' || editingTask.status === 'Approved';
+      let finalCompletedAt = editingTask.completedAt || null;
+
+      if (isNowCompleted) {
+        finalCompletedAt = editTaskForm.completedAt || editingTask.completedAt || new Date().toISOString();
+        if (editTaskForm.completedAt && editTaskForm.completedAt !== editingTask.completedAt) {
+          changes.push(`تاريخ الإنجاز: "${editTaskForm.completedAt}"`);
+        }
+      } else if (wasCompleted && !isNowCompleted) {
+        changes.push(`إعادة فتح المهمة بعد أن كانت مكتملة في (${editingTask.completedAt || 'سابقاً'})`);
+        finalCompletedAt = null;
+      }
+
+      const changeSummary = changes.length > 0 ? changes.join(' | ') : 'تحديث بيانات المهمة';
+
+      const auditEntry: WorkflowLog = {
+        fromStatus: editingTask.status,
+        toStatus: editTaskForm.status,
+        userId: user.uid,
+        userName: profile?.name || user.displayName || 'User',
+        timestamp: new Date().toISOString(),
+        note: `تعديل المهمة: ${changeSummary}${editTaskForm.editReason?.trim() ? ` (ملاحظة: ${editTaskForm.editReason.trim()})` : ''}`
+      };
+
+      const updatePayload: any = {
+        title: editTaskForm.title.trim(),
+        description: editTaskForm.description?.trim() || '',
+        phase: editTaskForm.phase || null,
+        subPhase: editTaskForm.subPhase || 'General',
+        priority: editTaskForm.priority || 'Medium',
+        projectId: editTaskForm.projectId || null,
+        parentTaskId: editTaskForm.parentTaskId || null,
+        assignedTo: assignedToName,
+        assignedToId: assignedToId,
+        assignedToIds: normalizedAssigneeIds,
+        startDate: editTaskForm.startDate || '',
+        endDate: editTaskForm.endDate || '',
+        dueDate: editTaskForm.endDate || '',
+        estimatedHours: Number(editTaskForm.estimatedHours || 0),
+        status: editTaskForm.status,
+        completedAt: finalCompletedAt,
+        workflowLog: arrayUnion(auditEntry),
+        updatedAt: new Date().toISOString(),
+        lastModifiedBy: profile?.name || user.displayName || 'User'
+      };
+
+      // Perform update on the EXACT same taskId
+      await updateDoc(doc(db, 'projectTasks', editingTask.id), updatePayload);
+      await refreshData();
+      setIsEditTaskModalOpen(false);
+      setEditingTask(null);
+    } catch (error: any) {
+      console.error('Error saving edited task:', error);
+      alert('حدث خطأ أثناء حفظ التعديلات: ' + (error?.message || ''));
+    } finally {
+      setIsSavingTaskEdit(false);
     }
   };
 
@@ -2634,77 +2871,6 @@ export const Operations: React.FC = () => {
                     <input required className="w-full px-4 py-3 bg-background text-foreground border border-border rounded-xl outline-none text-right font-bold text-sm focus:ring-2 focus:ring-primary" placeholder={t('مثال: تصميم الهيكل الإنشائي أو مراجعة المخططات')} value={taskForm.title} onChange={(e) => setTaskForm({...taskForm, title: e.target.value})} />
                   </div>
 
-                  {/* SUB-TASK SELECTION (الربط بمهمة رئيسية كـ Sub-task) */}
-                  <div className="p-3.5 bg-muted/20 border border-border rounded-2xl space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-black text-foreground flex items-center gap-1.5">
-                        <GitFork className="w-3.5 h-3.5 text-primary" />
-                        <span>{t('الربط بمهمة رئيسية (إنشاء كمهمة فرعية - Sub-task):')}</span>
-                      </label>
-                      {taskForm.parentTaskId && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setTaskForm(prev => ({ ...prev, parentTaskId: undefined }));
-                            setTaskParentSearch('');
-                          }}
-                          className="text-[10px] text-rose-600 font-bold hover:underline cursor-pointer"
-                        >
-                          {t('إلغاء الربط بالمهمة الرئيسية')}
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <div className="relative">
-                        <input
-                          type="text"
-                          value={taskParentSearch}
-                          onChange={e => setTaskParentSearch(e.target.value)}
-                          placeholder={t('ابحث في المهام لربط هذه المهمة كـ Sub-task...')}
-                          className="w-full p-2 pr-8 bg-background text-foreground border border-border text-xs rounded-xl outline-none focus:ring-2 focus:ring-primary font-medium text-right"
-                        />
-                        <Search className="w-3.5 h-3.5 text-muted-foreground absolute right-2.5 top-3 pointer-events-none" />
-                      </div>
-
-                      <select
-                        value={taskForm.parentTaskId || ''}
-                        onChange={e => {
-                          const selectedId = e.target.value;
-                          const parent = projectTasks.find(t => t.id === selectedId);
-                          setTaskForm(prev => ({
-                            ...prev,
-                            parentTaskId: selectedId || undefined,
-                            projectId: parent?.projectId || prev.projectId,
-                            phase: parent?.phase || prev.phase,
-                            subPhase: parent?.subPhase || prev.subPhase
-                          } as any));
-                        }}
-                        className="w-full p-2.5 bg-background text-foreground border border-border text-xs rounded-xl font-bold outline-none focus:ring-2 focus:ring-primary cursor-pointer text-right"
-                      >
-                        <option value="">-- {t('مهمة رئيسية مستقلة (ليست مهمة فرعية)')} --</option>
-                        {projectTasks
-                          .filter(t => {
-                            if (!taskParentSearch.trim()) return true;
-                            const q = taskParentSearch.toLowerCase();
-                            return (
-                              t.title?.toLowerCase().includes(q) ||
-                              t.assignedTo?.toLowerCase().includes(q) ||
-                              t.description?.toLowerCase().includes(q)
-                            );
-                          })
-                          .map(t => {
-                            const isDone = t.status === 'Executed' || t.status === 'Approved' || (t.status as string) === 'Completed';
-                            return (
-                              <option key={t.id} value={t.id}>
-                                {isDone ? '✔ ' : '⏳ '} {t.title} {t.assignedTo ? `(${t.assignedTo})` : ''}
-                              </option>
-                            );
-                          })}
-                      </select>
-                    </div>
-                  </div>
-
                   {/* Project Context & Selection */}
                   {selectedProjectId || selectedProject ? (
                     <div className="p-3.5 bg-primary/10 border border-primary/20 rounded-2xl flex items-center justify-between">
@@ -2727,7 +2893,7 @@ export const Operations: React.FC = () => {
                       <div className="grid grid-cols-2 gap-2 mb-1">
                         <button
                           type="button"
-                          onClick={() => setTaskForm({...taskForm, projectId: ''} as any)}
+                          onClick={() => setTaskForm(prev => ({ ...prev, projectId: '', parentTaskId: undefined } as any))}
                           className={`p-2.5 border rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                             !((taskForm as any).projectId)
                               ? 'bg-primary/10 border-primary text-primary shadow-sm'
@@ -2741,7 +2907,14 @@ export const Operations: React.FC = () => {
                           type="button"
                           onClick={() => {
                             if (projects.length > 0 && !((taskForm as any).projectId)) {
-                              setTaskForm({...taskForm, projectId: projects[0].id} as any);
+                              const targetP = projects[0];
+                              setTaskForm(prev => ({
+                                ...prev, 
+                                projectId: targetP.id,
+                                phase: targetP.phases?.[0] || '',
+                                subPhase: targetP.scope?.[0]?.name || 'General',
+                                parentTaskId: undefined
+                              } as any));
                             }
                           }}
                           className={`p-2.5 border rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
@@ -2754,7 +2927,21 @@ export const Operations: React.FC = () => {
                           <span>{t('اختيار مشروع محدد')}</span>
                         </button>
                       </div>
-                      <select className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none text-right font-bold text-xs focus:ring-2 focus:ring-primary cursor-pointer" value={(taskForm as any).projectId || ''} onChange={(e) => setTaskForm({...taskForm, projectId: e.target.value} as any)}>
+                      <select 
+                        className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none text-right font-bold text-xs focus:ring-2 focus:ring-primary cursor-pointer" 
+                        value={(taskForm as any).projectId || ''} 
+                        onChange={(e) => {
+                          const pId = e.target.value;
+                          const targetP = projects.find(p => p.id === pId);
+                          setTaskForm(prev => ({
+                            ...prev, 
+                            projectId: pId,
+                            phase: targetP?.phases?.[0] || '',
+                            subPhase: targetP?.scope?.[0]?.name || 'General',
+                            parentTaskId: undefined
+                          } as any));
+                        }}
+                      >
                         <option value="">📌 {t('بدون مشروع محدد (تكليف مباشر/عام)')}</option>
                         {projects.map(p => <option key={p.id} value={p.id}>📁 {p.name}</option>)}
                       </select>
@@ -2765,7 +2952,23 @@ export const Operations: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1.5">
                       <label className="text-xs font-black text-muted-foreground text-right block">{t('المرحلة (Phase)')}</label>
-                      <select className="w-full px-3 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none text-right font-bold focus:ring-2 focus:ring-primary cursor-pointer text-xs" value={taskForm.phase || ''} onChange={(e) => setTaskForm({...taskForm, phase: e.target.value})}>
+                      <select 
+                        className="w-full px-3 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none text-right font-bold focus:ring-2 focus:ring-primary cursor-pointer text-xs" 
+                        value={taskForm.phase || ''} 
+                        onChange={(e) => {
+                          const newPhase = e.target.value;
+                          setTaskForm(prev => {
+                            const next = { ...prev, phase: newPhase };
+                            const projId = selectedProjectId || (next as any).projectId || '';
+                            const projObj = projects.find(p => p.id === projId) || selectedProject;
+                            const validParents = getValidParentTasks(projectTasks, projId, newPhase, next.subPhase, null, projObj);
+                            if (next.parentTaskId && !validParents.some(p => p.id === next.parentTaskId)) {
+                              next.parentTaskId = undefined;
+                            }
+                            return next;
+                          });
+                        }}
+                      >
                         <option value="">{t('بدون مرحلة محددة')}</option>
                         {((projects.find(p => p.id === (selectedProjectId || (taskForm as any).projectId))?.phases) || selectedProject?.phases || []).map(p => <option key={p} value={p}>{p}</option>)}
                       </select>
@@ -2773,7 +2976,23 @@ export const Operations: React.FC = () => {
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-black text-muted-foreground text-right block">{t('نطاق العمل (Scope / WBS)')}</label>
-                      <select className="w-full px-3 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none text-right font-bold focus:ring-2 focus:ring-primary cursor-pointer text-xs" value={taskForm.subPhase || ''} onChange={(e) => setTaskForm({...taskForm, subPhase: e.target.value})}>
+                      <select 
+                        className="w-full px-3 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none text-right font-bold focus:ring-2 focus:ring-primary cursor-pointer text-xs" 
+                        value={taskForm.subPhase || ''} 
+                        onChange={(e) => {
+                          const newScope = e.target.value;
+                          setTaskForm(prev => {
+                            const next = { ...prev, subPhase: newScope };
+                            const projId = selectedProjectId || (next as any).projectId || '';
+                            const projObj = projects.find(p => p.id === projId) || selectedProject;
+                            const validParents = getValidParentTasks(projectTasks, projId, next.phase, newScope, null, projObj);
+                            if (next.parentTaskId && !validParents.some(p => p.id === next.parentTaskId)) {
+                              next.parentTaskId = undefined;
+                            }
+                            return next;
+                          });
+                        }}
+                      >
                         <option value="General">{t('عام (General)')}</option>
                         {((projects.find(p => p.id === (selectedProjectId || (taskForm as any).projectId))?.scope) || selectedProject?.scope || []).map((s: any) => (
                           <option key={s.id || s.name} value={s.name}>{s.name}</option>
@@ -2790,6 +3009,119 @@ export const Operations: React.FC = () => {
                         <option value="Low">{t('منخفضة (Low)')}</option>
                       </select>
                     </div>
+                  </div>
+
+                  {/* SUB-TASK SELECTION (الربط بمهمة رئيسية كـ Sub-task) */}
+                  <div className="p-3.5 bg-muted/20 border border-border rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <GitFork className="w-3.5 h-3.5 text-primary" />
+                        <label className="text-xs font-black text-foreground">
+                          {t('الربط بمهمة (إنشاء كمهمة فرعية - Sub-task):')}
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {availableParentTasksForCreation.length > 0 ? (
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-primary/10 text-primary border border-primary/20">
+                            {t('متاح')} {availableParentTasksForCreation.length} {t('مهمة مطابقة (رئيسية وفرعية)')}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-muted text-muted-foreground border border-border">
+                            {t('لا توجد مهام في هذه المرحلة ونطاق العمل')}
+                          </span>
+                        )}
+                        {taskForm.parentTaskId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTaskForm(prev => ({ ...prev, parentTaskId: undefined }));
+                              setTaskParentSearch('');
+                            }}
+                            className="text-[10px] text-rose-600 font-bold hover:underline cursor-pointer"
+                          >
+                            {t('إلغاء الربط')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      {t('تعرض القائمة كل المهام (الرئيسية والفرعية) التابعة لنفس المشروع، المرحلة')} ({taskForm.phase || t('بدون مرحلة')}) {t('ونطاق العمل')} ({taskForm.subPhase || t('عام')}). {t('يمكنك اختيار أي مهمة رئيسية أو فرعية لإنشاء تفريع جديد.')}
+                    </p>
+
+                    <div className="space-y-1.5">
+                      {availableParentTasksForCreation.length > 3 && (
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={taskParentSearch}
+                            onChange={e => setTaskParentSearch(e.target.value)}
+                            placeholder={t('ابحث بالاسم في المهام المطابقة...')}
+                            className="w-full p-2 pr-8 bg-background text-foreground border border-border text-xs rounded-xl outline-none focus:ring-2 focus:ring-primary font-medium text-right"
+                          />
+                          <Search className="w-3.5 h-3.5 text-muted-foreground absolute right-2.5 top-3 pointer-events-none" />
+                        </div>
+                      )}
+
+                      <select
+                        value={taskForm.parentTaskId || ''}
+                        onChange={e => {
+                          const selectedId = e.target.value;
+                          setTaskForm(prev => ({
+                            ...prev,
+                            parentTaskId: selectedId || undefined
+                          }));
+                        }}
+                        className="w-full p-2.5 bg-background text-foreground border border-border text-xs rounded-xl font-bold outline-none focus:ring-2 focus:ring-primary cursor-pointer text-right"
+                      >
+                        <option value="">-- {t('مهمة رئيسية مستقلة (بدون أب / Main Task)')} --</option>
+                        {availableParentTasksForCreation
+                          .filter(t => {
+                            if (!taskParentSearch.trim()) return true;
+                            const q = taskParentSearch.toLowerCase();
+                            return (
+                              t.title?.toLowerCase().includes(q) ||
+                              t.assignedTo?.toLowerCase().includes(q) ||
+                              t.description?.toLowerCase().includes(q)
+                            );
+                          })
+                          .map(t => {
+                            const isDone = t.status === 'Executed' || t.status === 'Approved' || (t.status as string) === 'Completed';
+                            const hierarchy = getTaskHierarchyInfo(t, projectTasks);
+                            return (
+                              <option key={t.id} value={t.id}>
+                                {hierarchy.indent}
+                                [{hierarchy.badgeLabel}] {isDone ? '✔ ' : '📌 '}
+                                {t.title} {t.assignedTo ? `(${t.assignedTo})` : ''}
+                              </option>
+                            );
+                          })}
+                      </select>
+                    </div>
+
+                    {taskForm.parentTaskId && (() => {
+                      const selectedParent = projectTasks.find(t => t.id === taskForm.parentTaskId);
+                      if (!selectedParent) return null;
+                      const hierarchy = getTaskHierarchyInfo(selectedParent, projectTasks);
+                      return (
+                        <div className="p-2.5 bg-primary/10 border border-primary/20 rounded-xl text-xs flex items-center justify-between text-foreground">
+                          <div className="flex items-center gap-2">
+                            <GitFork className="w-3.5 h-3.5 text-primary rotate-180" />
+                            <span>
+                              {hierarchy.isSubTask ? t('إنشاء مستوى فرعي جديد تابع لـ:') : t('مرتبطة كـ مهمة فرعية من:')} <strong>{selectedParent.title}</strong>
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-primary/20 text-primary border border-primary/30">
+                              [{hierarchy.badgeLabel}]
+                            </span>
+                            <span className="text-[10px] font-bold text-muted-foreground">
+                              {selectedParent.phase || 'عام'} / {selectedParent.subPhase || 'General'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Assignees */}
@@ -2968,13 +3300,35 @@ export const Operations: React.FC = () => {
                         </div>
                      </div>
                   </div>
-                  <button onClick={() => setIsTaskDetailsOpen(false)} className="p-3 bg-background border border-border text-foreground rounded-2xl hover:bg-muted transition-all cursor-pointer"><X /></button>
+                  <div className="flex items-center gap-2">
+                    {canEditTask(viewingTask, selectedProject) && (
+                      <button 
+                        onClick={() => handleOpenEditTask(viewingTask)} 
+                        className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground font-black text-xs rounded-2xl shadow-md hover:bg-primary/90 transition-all cursor-pointer"
+                        title={t('تعديل المهمة بعد الإنشاء')}
+                      >
+                        <Edit3 className="w-4 h-4" />
+                        <span>{t('تعديل المهمة')}</span>
+                      </button>
+                    )}
+                    <button onClick={() => setIsTaskDetailsOpen(false)} className="p-3 bg-background border border-border text-foreground rounded-2xl hover:bg-muted transition-all cursor-pointer"><X /></button>
+                  </div>
                </div>
 
                <div className="flex-1 overflow-hidden flex flex-col md:flex-row divide-x divide-x-reverse divide-border font-sans" dir="rtl">
                   {/* Details Sidebar */}
                   <div className="w-full md:w-80 p-6 sm:p-8 space-y-6 bg-muted/20 overflow-y-auto custom-scrollbar border-l border-border font-sans">
                      <div className="space-y-5">
+                        {canEditTask(viewingTask, selectedProject) && (
+                          <button 
+                            onClick={() => handleOpenEditTask(viewingTask)}
+                            className="w-full py-2.5 bg-primary/10 text-primary border border-primary/20 text-xs font-black rounded-xl hover:bg-primary hover:text-primary-foreground transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>{t('تعديل بيانات المهمة')}</span>
+                          </button>
+                        )}
+
                         {/* Project Info Block */}
                         <div className="space-y-1.5 p-3 bg-background/80 border border-border rounded-2xl">
                           <div className="flex items-center gap-1.5 text-[10px] font-black text-muted-foreground uppercase tracking-wider">
@@ -3291,8 +3645,477 @@ export const Operations: React.FC = () => {
                            </div>
                         </div>
                      </section>
+
+                     {/* Audit Trail & History Log (سجل التعديلات والعمليات ومسار العمل) */}
+                     <section className="space-y-4">
+                        {(() => {
+                          const workflowLog = safeParseWorkflowLog(viewingTask?.workflowLog);
+                          const reversedLogs = [...workflowLog].reverse();
+
+                          return (
+                            <>
+                              <div className="flex items-center justify-between">
+                                 <h4 className="text-lg font-black text-foreground flex items-center gap-2 font-sans">
+                                    <History className="w-5 h-5 text-amber-500" />
+                                    <span>{t('سجل التعديلات ومسار العمليات (Audit & History Trail)')}</span>
+                                 </h4>
+                                 <span className="text-xs font-bold text-muted-foreground bg-muted/60 px-3 py-1 rounded-xl border border-border">
+                                    {workflowLog.length} {t('سجلات')}
+                                 </span>
+                              </div>
+
+                              <div className="p-6 bg-muted/20 rounded-3xl border border-border space-y-3 font-sans">
+                                 {workflowLog.length === 0 ? (
+                                    <p className="text-xs text-muted-foreground italic text-center py-4">{t('لا توجد سجلات تعديل سابقة لهذه المهمة.')}</p>
+                                 ) : (
+                                    <div className="space-y-3 max-h-[300px] overflow-y-auto custom-scrollbar">
+                                       {reversedLogs.map((log: any, idx: number) => {
+                                          const isDone = log.toStatus === 'Executed' || log.toStatus === 'Approved' || log.toStatus === 'Completed';
+                                          let formattedDate = log.timestamp || '';
+                                          try {
+                                             formattedDate = new Date(log.timestamp).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' });
+                                          } catch(e) {}
+
+                                          return (
+                                             <div key={idx} className="p-4 bg-card border border-border rounded-2xl space-y-2 shadow-xs">
+                                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                   <div className="flex items-center gap-2">
+                                                      <span className={cn(
+                                                         "w-2.5 h-2.5 rounded-full",
+                                                         isDone ? "bg-emerald-500" : "bg-primary"
+                                                      )} />
+                                                      <span className="text-xs font-black text-foreground">
+                                                         {log.userName || log.userId || t('مستخدم')}
+                                                      </span>
+                                                      {log.toStatus && (
+                                                         <span className={cn(
+                                                            "text-[10px] font-black px-2 py-0.5 rounded-md border",
+                                                            isDone ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-primary/10 text-primary border-primary/20"
+                                                         )}>
+                                                            {log.toStatus}
+                                                         </span>
+                                                      )}
+                                                   </div>
+                                                   <span className="text-[11px] font-mono font-bold text-muted-foreground" dir="ltr">
+                                                      {formattedDate}
+                                                   </span>
+                                                </div>
+                                                {log.fromStatus && log.fromStatus !== log.toStatus && (
+                                                   <div className="text-[11px] font-bold text-muted-foreground">
+                                                      <span>{t('من')}: </span><strong className="text-foreground">{log.fromStatus}</strong>
+                                                      <span> ➔ {t('إلى')}: </span><strong className="text-foreground">{log.toStatus}</strong>
+                                                   </div>
+                                                )}
+                                                {log.note && (
+                                                   <p className="text-xs font-medium text-foreground bg-muted/40 p-2.5 rounded-xl border border-border/50 leading-relaxed whitespace-pre-wrap">
+                                                      {log.note}
+                                                   </p>
+                                                )}
+                                             </div>
+                                          );
+                                       })}
+                                    </div>
+                                 )}
+                              </div>
+                            </>
+                          );
+                        })()}
+                     </section>
                   </div>
                </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Task Modal (تعديل المهمة بعد الإنشاء) */}
+      <AnimatePresence>
+        {isEditTaskModalOpen && editingTask && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 font-sans">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => !isSavingTaskEdit && setIsEditTaskModalOpen(false)} 
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 20 }} 
+              className="relative bg-card text-foreground border border-border w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden font-sans"
+              dir="rtl"
+            >
+               <div className="p-6 border-b border-border bg-muted/30 flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                     <div className="w-10 h-10 bg-primary/10 text-primary rounded-xl flex items-center justify-center border border-primary/20">
+                        <Edit3 className="w-5 h-5" />
+                     </div>
+                     <div>
+                        <h3 className="text-lg font-black text-foreground">{t('تعديل بيانات المهمة')}</h3>
+                        <p className="text-xs text-muted-foreground font-medium">#{editingTask.id.slice(0, 8)} • {t('تحديث البيانات والحفظ على نفس معرف المهمة')}</p>
+                     </div>
+                  </div>
+                  <button 
+                    disabled={isSavingTaskEdit}
+                    onClick={() => setIsEditTaskModalOpen(false)} 
+                    className="p-2 hover:bg-muted text-muted-foreground rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+               </div>
+
+               <form onSubmit={handleSaveEditedTask} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar">
+                  {/* Task Title */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                      <span className="text-rose-500">*</span>
+                      <span>{t('عنوان المهمة')}</span>
+                    </label>
+                    <input 
+                      type="text" 
+                      required 
+                      className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-primary" 
+                      placeholder={t('أدخل عنوان المهمة...')} 
+                      value={editTaskForm.title} 
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, title: e.target.value })} 
+                    />
+                  </div>
+
+                  {/* Project Phase & Scope of Work (WBS) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                        <Milestone className="w-3.5 h-3.5 text-primary" />
+                        <span>{t('المرحلة (Phase)')}</span>
+                      </label>
+                      <select 
+                        className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary" 
+                        value={editTaskForm.phase} 
+                        onChange={(e) => setEditTaskForm({ ...editTaskForm, phase: e.target.value })}
+                      >
+                        <option value="">{t('بدون مرحلة محددة')}</option>
+                        {(() => {
+                          const proj = projects.find(p => p.id === (editTaskForm.projectId || editingTask.projectId));
+                          const phasesList = proj?.phases && proj.phases.length > 0 ? proj.phases : ['Analysis', 'Design', 'Development', 'Testing', 'Deployment'];
+                          return phasesList.map(ph => (
+                            <option key={ph} value={ph}>{ph}</option>
+                          ));
+                        })()}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                        <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>{t('نطاق العمل (WBS / Scope)')}</span>
+                      </label>
+                      <select 
+                        className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary" 
+                        value={editTaskForm.subPhase} 
+                        onChange={(e) => setEditTaskForm({ ...editTaskForm, subPhase: e.target.value })}
+                      >
+                        <option value="General">{t('عام (General)')}</option>
+                        {(() => {
+                          const proj = projects.find(p => p.id === (editTaskForm.projectId || editingTask.projectId));
+                          if (proj?.scope && proj.scope.length > 0) {
+                            return proj.scope.map(s => (
+                              <option key={s.id} value={s.name}>{s.name}</option>
+                            ));
+                          }
+                          return null;
+                        })()}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Assignees (المسؤولين والتكليف مع منع التكرار) */}
+                  <div className="space-y-2 p-3 bg-muted/20 border border-border rounded-2xl">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-black text-muted-foreground flex items-center gap-1.5">
+                        <User className="w-3.5 h-3.5 text-primary" />
+                        <span>{t('المسؤولين والتكليف (تعيين متعدد بدون تكرار)')}</span>
+                      </label>
+                      <span className="text-[10px] font-bold text-muted-foreground">
+                        {editTaskForm.assignedToIds.length} {t('تم اختيارهم')}
+                      </span>
+                    </div>
+
+                    {/* Selected Assignees Badges */}
+                    <div className="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-background border border-border rounded-xl">
+                      {editTaskForm.assignedToIds.length === 0 ? (
+                        <span className="text-xs text-muted-foreground italic">{t('لم يتم تعيين أي موظف بعد')}</span>
+                      ) : (
+                        editTaskForm.assignedToIds.map(empId => {
+                          const emp = findEmployeeByIdentifier(empId, employees);
+                          return (
+                            <span 
+                              key={empId} 
+                              className="inline-flex items-center gap-1.5 bg-primary/10 text-primary border border-primary/25 text-xs font-bold px-2.5 py-1 rounded-lg"
+                            >
+                              <span>{emp?.name || empId}</span>
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  setEditTaskForm({
+                                    ...editTaskForm,
+                                    assignedToIds: editTaskForm.assignedToIds.filter(id => id !== empId)
+                                  });
+                                }}
+                                className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 hover:text-destructive flex items-center justify-center transition-colors cursor-pointer"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Add Assignee Dropdown */}
+                    <div className="flex gap-2">
+                      <select 
+                        className="flex-1 px-3 py-2 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) return;
+                          if (!editTaskForm.assignedToIds.includes(val)) {
+                            const updated = normalizeTaskAssigneeIds([...editTaskForm.assignedToIds, val], employees);
+                            setEditTaskForm({ ...editTaskForm, assignedToIds: updated });
+                          }
+                          e.target.value = '';
+                        }}
+                        defaultValue=""
+                      >
+                        <option value="" disabled>{t('+ إضافة مسؤول للمهمة...')}</option>
+                        {employees
+                          .filter(emp => !editTaskForm.assignedToIds.includes(emp.id) && !editTaskForm.assignedToIds.includes(emp.employeeId || ''))
+                          .map(emp => (
+                            <option key={emp.id} value={emp.id}>{emp.name} ({(emp as any).department || emp.departmentId || 'موظف'})</option>
+                          ))
+                        }
+                      </select>
+                      {editTaskForm.assignedToIds.length > 0 && (
+                        <button 
+                          type="button"
+                          onClick={() => setEditTaskForm({ ...editTaskForm, assignedToIds: [] })}
+                          className="px-3 py-2 bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                        >
+                          {t('مسح الكل')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Dates & Estimated Hours */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-blue-500" />
+                        <span>{t('تاريخ البداية')}</span>
+                      </label>
+                      <input 
+                        type="date" 
+                        className="w-full px-3 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary" 
+                        value={editTaskForm.startDate} 
+                        onChange={(e) => setEditTaskForm({ ...editTaskForm, startDate: e.target.value })} 
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-rose-500" />
+                        <span>{t('نهاية المهمة / الاستحقاق')}</span>
+                      </label>
+                      <input 
+                        type="date" 
+                        className="w-full px-3 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary" 
+                        value={editTaskForm.endDate} 
+                        onChange={(e) => setEditTaskForm({ ...editTaskForm, endDate: e.target.value })} 
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{t('الوقت المقدر (ساعات)')}</span>
+                      </label>
+                      <input 
+                        type="number" 
+                        min="0" 
+                        step="0.5" 
+                        placeholder="0" 
+                        className="w-full px-3 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary" 
+                        value={editTaskForm.estimatedHours || ''} 
+                        onChange={(e) => setEditTaskForm({ ...editTaskForm, estimatedHours: Number(e.target.value) })} 
+                      />
+                    </div>
+                  </div>
+
+                  {/* Status & Completion Date */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-muted/20 border border-border rounded-2xl">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>{t('الحالة الحالية للمهمة')}</span>
+                      </label>
+                      <select 
+                        className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary" 
+                        value={editTaskForm.status} 
+                        onChange={(e) => {
+                          const newSt = e.target.value as TaskStatus;
+                          const isComp = newSt === 'Completed' || newSt === 'Executed' || newSt === 'Approved';
+                          setEditTaskForm({ 
+                            ...editTaskForm, 
+                            status: newSt,
+                            completedAt: isComp ? (editTaskForm.completedAt || new Date().toISOString().slice(0, 16)) : editTaskForm.completedAt
+                          });
+                        }}
+                      >
+                        <option value="Pending">Pending (قيد الانتظار)</option>
+                        <option value="In Progress">In Progress (قيد التنفيذ)</option>
+                        <option value="Under Review">Under Review (قيد المراجعة)</option>
+                        <option value="Approved">Approved (معتمدة ومقبولة)</option>
+                        <option value="Executed">Executed (تم التنفيذ)</option>
+                        <option value="Completed">Completed (مكتملة)</option>
+                        <option value="Rejected">Rejected (مرفوضة وتحتاج تعديل)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>{t('تاريخ ويوم الإنجاز (Actual Completion)')}</span>
+                      </label>
+                      <input 
+                        type="datetime-local" 
+                        className="w-full px-3 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary" 
+                        value={editTaskForm.completedAt ? editTaskForm.completedAt.slice(0, 16) : ''} 
+                        onChange={(e) => setEditTaskForm({ ...editTaskForm, completedAt: e.target.value })} 
+                      />
+                    </div>
+                  </div>
+
+                  {/* Priority & Parent Task */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black text-muted-foreground text-right block">{t('أولوية المهمة')}</label>
+                      <select 
+                        className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary"
+                        value={editTaskForm.priority}
+                        onChange={(e) => setEditTaskForm({ ...editTaskForm, priority: e.target.value })}
+                      >
+                        <option value="Low">منخفضة (Low)</option>
+                        <option value="Medium">متوسطة (Medium)</option>
+                        <option value="High">عالية (High)</option>
+                        <option value="Urgent">عاجلة جداً (Urgent)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                          <GitFork className="w-3.5 h-3.5 text-primary rotate-180" />
+                          <span>{t('الربط بمهمة (Sub-task of)')}</span>
+                        </label>
+                        <span className="text-[10px] font-bold text-muted-foreground">
+                          {availableParentTasksForEdit.length} {t('متاحة بنفس المرحلة والنطاق')}
+                        </span>
+                      </div>
+                      <select 
+                        className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-bold text-xs focus:ring-2 focus:ring-primary"
+                        value={editTaskForm.parentTaskId}
+                        onChange={(e) => setEditTaskForm({ ...editTaskForm, parentTaskId: e.target.value })}
+                      >
+                        <option value="">{t('مهمة رئيسية مستقلة (بدون أب / Main Task)')}</option>
+                        {availableParentTasksForEdit.map(t => {
+                          const isDone = t.status === 'Executed' || t.status === 'Approved' || (t.status as string) === 'Completed';
+                          const hierarchy = getTaskHierarchyInfo(t, projectTasks);
+                          return (
+                            <option key={t.id} value={t.id}>
+                              {hierarchy.indent}
+                              [{hierarchy.badgeLabel}] {isDone ? '✔ ' : '📌 '}
+                              {t.title} {t.assignedTo ? `(${t.assignedTo})` : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      {editTaskForm.parentTaskId && (() => {
+                        const selectedParent = projectTasks.find(t => t.id === editTaskForm.parentTaskId);
+                        if (!selectedParent) return null;
+                        const hierarchy = getTaskHierarchyInfo(selectedParent, projectTasks);
+                        return (
+                          <div className="p-2 bg-primary/10 border border-primary/20 rounded-xl text-[11px] flex items-center justify-between text-foreground">
+                            <span className="truncate">
+                              {hierarchy.isSubTask ? t('مستوى فرعي تابع لـ:') : t('مرتبطة كـ مهمة فرعية من:')} <strong>{selectedParent.title}</strong>
+                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0 mr-2">
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-primary/20 text-primary border border-primary/30">
+                                [{hierarchy.badgeLabel}]
+                              </span>
+                              <span className="text-[10px] font-bold text-muted-foreground">
+                                {selectedParent.phase || 'عام'} / {selectedParent.subPhase || 'General'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Description */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black text-muted-foreground text-right block">{t('وصف وتفاصيل المهمة')}</label>
+                    <textarea 
+                      className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none h-24 resize-none text-right font-medium text-xs leading-relaxed focus:ring-2 focus:ring-primary" 
+                      placeholder={t('أدخل تفاصيل ومخرجات المهمة المطلوبة بدقة...')} 
+                      value={editTaskForm.description} 
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, description: e.target.value })} 
+                    />
+                  </div>
+
+                  {/* Audit Edit Reason / Note */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black text-muted-foreground text-right block flex items-center gap-1">
+                      <History className="w-3.5 h-3.5 text-amber-500" />
+                      <span>{t('سبب التعديل / ملاحظة (لسجل الـ Audit Trail)')}</span>
+                    </label>
+                    <input 
+                      type="text" 
+                      className="w-full px-4 py-2.5 bg-background text-foreground border border-border rounded-xl outline-none font-medium text-xs focus:ring-2 focus:ring-primary" 
+                      placeholder={t('اختياري: مثال تم تعديل المسؤول أو ضبط الاستحقاق بناء على اجتماع العميل...')} 
+                      value={editTaskForm.editReason} 
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, editReason: e.target.value })} 
+                    />
+                  </div>
+
+                  {/* Submit Actions */}
+                  <div className="pt-3 flex items-center gap-3">
+                    <button 
+                      type="submit" 
+                      disabled={isSavingTaskEdit}
+                      className="flex-1 py-3 bg-primary text-primary-foreground font-black text-xs rounded-xl shadow-lg hover:bg-primary/90 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isSavingTaskEdit ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>{t('جاري حفظ التعديلات...')}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4" />
+                          <span>{t('حفظ التعديلات على المهمة (نفس المعرف)')}</span>
+                        </>
+                      )}
+                    </button>
+                    <button 
+                      type="button"
+                      disabled={isSavingTaskEdit}
+                      onClick={() => setIsEditTaskModalOpen(false)}
+                      className="px-5 py-3 bg-muted text-muted-foreground hover:bg-muted/80 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                    >
+                      {t('إلغاء')}
+                    </button>
+                  </div>
+               </form>
             </motion.div>
           </div>
         )}

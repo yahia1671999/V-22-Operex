@@ -25,7 +25,7 @@ import {
   Tag
 } from 'lucide-react';
 import { ProjectTask, Employee } from '../../types';
-import { calculateTaskDelay, getTaskAssignedIds, isOpenTask, getTaskDistinctAssignees, findEmployeeByIdentifier } from '../../lib/taskUtils';
+import { calculateTaskDelay, getTaskAssignedIds, isOpenTask, getTaskDistinctAssignees, findEmployeeByIdentifier, safeParseWorkflowLog } from '../../lib/taskUtils';
 
 interface TaskDetailsModalProps {
   task: ProjectTask | null;
@@ -114,15 +114,7 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
 
   // 6. Workflow Log / Audit Trail Parsing
   const parsedWorkflowLogs = useMemo(() => {
-    let logs: any[] = [];
-    if (Array.isArray(task.workflowLog)) {
-      logs = [...task.workflowLog];
-    } else if (typeof task.workflowLog === 'string') {
-      try {
-        const parsed = JSON.parse(task.workflowLog);
-        if (Array.isArray(parsed)) logs = [...parsed];
-      } catch (e) {}
-    }
+    const logs = [...safeParseWorkflowLog(task.workflowLog)];
 
     // Sort ascending by timestamp
     logs.sort((a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime());

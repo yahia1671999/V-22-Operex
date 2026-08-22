@@ -1,4 +1,36 @@
-import { ProjectTask, Employee } from '../types';
+import { ProjectTask, Employee, WorkflowLog } from '../types';
+
+/**
+ * Safely parses and normalizes workflowLog from any task object.
+ * Handles: Array, JSON string, Object, null, undefined, or unexpected types.
+ * Always guarantees returning a clean array of WorkflowLog objects without throwing errors.
+ */
+export function safeParseWorkflowLog(workflowLog: any): WorkflowLog[] {
+  if (!workflowLog) return [];
+  if (Array.isArray(workflowLog)) return workflowLog;
+  if (typeof workflowLog === 'string') {
+    const trimmed = workflowLog.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === 'object') return [parsed];
+    } catch {
+      return [{
+        fromStatus: 'None' as any,
+        toStatus: 'None' as any,
+        userId: 'system',
+        userName: 'النظام',
+        timestamp: new Date().toISOString(),
+        note: trimmed
+      }];
+    }
+  }
+  if (typeof workflowLog === 'object' && workflowLog !== null) {
+    return [workflowLog as WorkflowLog];
+  }
+  return [];
+}
 
 /**
  * Returns true if the task is considered open/active
@@ -359,8 +391,9 @@ export function getTaskCompletionDateTime(task: ProjectTask): Date | null {
     if (!isNaN(d.getTime())) return d;
   }
 
-  if (Array.isArray(task.workflowLog) && task.workflowLog.length > 0) {
-    const doneLogs = task.workflowLog.filter(l => 
+  const logs = safeParseWorkflowLog(task.workflowLog);
+  if (logs.length > 0) {
+    const doneLogs = logs.filter(l => 
       l.toStatus === 'Executed' || (l.toStatus as string) === 'Completed' || l.toStatus === 'Approved'
     );
     if (doneLogs.length > 0) {
@@ -551,8 +584,9 @@ export function getTaskCompletionDate(task: ProjectTask): string | null {
     if (dStr) return dStr;
   }
 
-  if (Array.isArray(task.workflowLog) && task.workflowLog.length > 0) {
-    const doneLogs = task.workflowLog.filter(l => 
+  const logs = safeParseWorkflowLog(task.workflowLog);
+  if (logs.length > 0) {
+    const doneLogs = logs.filter(l => 
       l.toStatus === 'Executed' || (l.toStatus as string) === 'Completed' || l.toStatus === 'Approved'
     );
     if (doneLogs.length > 0) {
@@ -662,18 +696,21 @@ export function getTaskExecutionMetrics(task: ProjectTask): TaskExecutionMetrics
     if (task?.completedAt) {
       const d = new Date(task.completedAt);
       if (!isNaN(d.getTime())) completedDate = d;
-    } else if (Array.isArray(task?.workflowLog) && task.workflowLog.length > 0) {
-      const doneLogs = task.workflowLog.filter(l => 
-        l.toStatus === 'Executed' || (l.toStatus as string) === 'Completed' || l.toStatus === 'Approved'
-      );
-      if (doneLogs.length > 0) {
-        const last = doneLogs[doneLogs.length - 1];
-        const d = new Date(last.timestamp);
+    } else {
+      const logs = safeParseWorkflowLog(task?.workflowLog);
+      if (logs.length > 0) {
+        const doneLogs = logs.filter(l => 
+          l.toStatus === 'Executed' || (l.toStatus as string) === 'Completed' || l.toStatus === 'Approved'
+        );
+        if (doneLogs.length > 0) {
+          const last = doneLogs[doneLogs.length - 1];
+          const d = new Date(last.timestamp);
+          if (!isNaN(d.getTime())) completedDate = d;
+        }
+      } else if (task?.updatedAt) {
+        const d = new Date(task.updatedAt);
         if (!isNaN(d.getTime())) completedDate = d;
       }
-    } else if (task?.updatedAt) {
-      const d = new Date(task.updatedAt);
-      if (!isNaN(d.getTime())) completedDate = d;
     }
   }
   const completedAtFormatted = completedDate ? formatDateTimeArabic(completedDate) : (task?.endDate ? `${task.endDate} (مستهدف)` : 'قيد التنفيذ');

@@ -28,7 +28,7 @@ import { ProjectTask, TaskStatus, WorkflowLog, TaskChatMessage } from '../../typ
 import { cn } from '../../lib/utils';
 import { ChatInputWithMentions } from '../ChatInputWithMentions';
 import { useLanguage } from '../../contexts/LanguageContext';
-import { getAssignedEmployeeName, isOpenTask, calculateTaskDelay, getTaskExecutionMetrics, normalizeTaskAssigneeIds, findEmployeeByIdentifier } from '../../lib/taskUtils';
+import { getAssignedEmployeeName, isOpenTask, calculateTaskDelay, getTaskExecutionMetrics, normalizeTaskAssigneeIds, findEmployeeByIdentifier, safeParseWorkflowLog } from '../../lib/taskUtils';
 import { StartTaskModal } from '../common/StartTaskModal';
 import { CompleteTaskModal } from '../common/CompleteTaskModal';
 
@@ -194,11 +194,12 @@ export const MyTasks: React.FC = () => {
       const ownerName = (t as any).ownerName ? String((t as any).ownerName).trim().toLowerCase() : '';
 
       // Check first log entry in workflowLog
-      const firstLogUserId = t.workflowLog?.[0]?.userId ? String(t.workflowLog[0].userId).trim().toLowerCase() : '';
-      const firstLogUserName = t.workflowLog?.[0]?.userName ? String(t.workflowLog[0].userName).trim().toLowerCase() : '';
+      const taskLogs = safeParseWorkflowLog(t.workflowLog);
+      const firstLogUserId = taskLogs[0]?.userId ? String(taskLogs[0].userId).trim().toLowerCase() : '';
+      const firstLogUserName = taskLogs[0]?.userName ? String(taskLogs[0].userName).trim().toLowerCase() : '';
 
       // Check any creation / assign log entry
-      const hasCreationLogMatch = t.workflowLog?.some((log, idx) => {
+      const hasCreationLogMatch = taskLogs.some((log, idx) => {
         if (idx > 0 && !log.note?.toLowerCase().includes('creat') && !log.note?.includes('إنشاء') && !log.note?.includes('إسناد')) {
           return false;
         }

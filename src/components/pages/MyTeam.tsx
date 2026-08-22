@@ -21,6 +21,7 @@ import { WeeklySchedulePdfModal } from './WeeklySchedulePdfModal';
 import { TeamPerformanceTab } from './TeamPerformanceTab';
 import { getTaskAssignedIds, getTaskCompletionDate, calculateTaskDelay, TaskDelayInfo, toLocalDateStr, normalizeTaskAssigneeIds, findEmployeeByIdentifier } from '../../lib/taskUtils';
 import { formatTime12h, formatDateTime12h } from '../../utils/timeFormatter';
+import { getValidParentTasks, getTaskHierarchyInfo, isParentTaskIdValid } from '../../utils/taskHierarchyUtils';
 
 interface MyTeamProps {
   onNavigateToTab?: (tab: string) => void;
@@ -132,6 +133,23 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
   const [editTaskProgress, setEditTaskProgress] = useState<number>(0);
   const [isSubmittingEditTask, setIsSubmittingEditTask] = useState(false);
 
+  // Parent task filtering & anti-circular memo for Edit Task Modal
+  const selectedEditTaskProjectObj = useMemo(() => {
+    return projects.find((p: any) => p.id === editTaskProjectId) || null;
+  }, [projects, editTaskProjectId]);
+
+  const availableParentTasksForEditTask = useMemo(() => {
+    if (!editingTask) return [];
+    return getValidParentTasks(
+      projectTasks,
+      editTaskProjectId,
+      editTaskPhase,
+      editTaskScope,
+      editingTask.id,
+      selectedEditTaskProjectObj
+    );
+  }, [projectTasks, editingTask, editTaskProjectId, editTaskPhase, editTaskScope, selectedEditTaskProjectObj]);
+
   // Completed Tasks Filters State
   const [completedTaskMonth, setCompletedTaskMonth] = useState<string>(() => {
     const d = new Date();
@@ -154,6 +172,42 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
   const [newTaskEstimatedHours, setNewTaskEstimatedHours] = useState<number>(2);
   const [isSubmittingTask, setIsSubmittingTask] = useState(false);
+
+  // Parent task filtering memo for Assign Task Modal
+  const selectedNewTaskProjectObj = useMemo(() => {
+    return projects.find((p: any) => p.id === newTaskProjectId) || null;
+  }, [projects, newTaskProjectId]);
+
+  const availableParentTasksForNewTask = useMemo(() => {
+    return getValidParentTasks(
+      projectTasks,
+      newTaskProjectId,
+      newTaskPhase,
+      newTaskScope,
+      null,
+      selectedNewTaskProjectObj
+    );
+  }, [projectTasks, newTaskProjectId, newTaskPhase, newTaskScope, selectedNewTaskProjectObj]);
+
+  // Auto-clear invalid parent task if project, phase, or scope changes in Assign Modal
+  React.useEffect(() => {
+    if (isAssignTaskModalOpen && newTaskParentTaskId) {
+      const isValid = availableParentTasksForNewTask.some(t => String(t.id) === String(newTaskParentTaskId));
+      if (!isValid) {
+        setNewTaskParentTaskId('');
+      }
+    }
+  }, [isAssignTaskModalOpen, availableParentTasksForNewTask, newTaskParentTaskId]);
+
+  // Auto-clear invalid parent task if project, phase, or scope changes in Edit Modal
+  React.useEffect(() => {
+    if (editingTask && editTaskParentTaskId) {
+      const isValid = availableParentTasksForEditTask.some(t => String(t.id) === String(editTaskParentTaskId));
+      if (!isValid) {
+        setEditTaskParentTaskId('');
+      }
+    }
+  }, [editingTask, availableParentTasksForEditTask, editTaskParentTaskId]);
 
   // Monthly Attendance History Modal State
   const [showAttendanceHistoryModal, setShowAttendanceHistoryModal] = useState(false);
@@ -1656,14 +1710,14 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
           dueDate: newTaskDueDate || todayStr,
           estimatedHours: Number(newTaskEstimatedHours) || 2,
           status: 'Pending',
-          workflowLog: JSON.stringify([{
+          workflowLog: [{
             fromStatus: 'Pending',
             toStatus: 'Pending',
             userId: user?.uid || (profile as any)?.id || 'manager',
             userName: user?.displayName || user?.email || 'المدير المباشر',
             timestamp: new Date().toISOString(),
             note: `إسناد مهمة جديدة بوقت تقديري مقداره ${newTaskEstimatedHours || 2} ساعة${newTaskParentTaskId ? ' (كمهمة فرعية)' : ''}`
-          }]),
+          }],
           createdAt: new Date().toISOString(),
           createdBy: user?.displayName || user?.email || 'المدير المباشر'
         })
@@ -4515,22 +4569,31 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
               <div className="p-3 bg-muted/20 border border-border rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-black text-foreground flex items-center gap-1.5">
-                    <GitFork className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>الربط بمهمة رئيسية (إنشاء كمهمة فرعية - Sub-task):</span>
+                    <GitFork className="w-3.5 h-3.5 text-indigo-600 rotate-180" />
+                    <span>الربط بمهمة رئيسية أو فرعية (إنشاء كـ Sub-task):</span>
                   </label>
-                  {newTaskParentTaskId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNewTaskParentTaskId('');
-                        setNewTaskParentSearch('');
-                      }}
-                      className="text-[10px] text-rose-600 font-bold hover:underline cursor-pointer"
-                    >
-                      إلغاء الربط بالمهمة الرئيسية
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full font-bold">
+                      {availableParentTasksForNewTask.length} مهام متاحة للربط
+                    </span>
+                    {newTaskParentTaskId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewTaskParentTaskId('');
+                          setNewTaskParentSearch('');
+                        }}
+                        className="text-[10px] text-rose-600 font-bold hover:underline cursor-pointer"
+                      >
+                        إلغاء الربط بالمهمة الرئيسية
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                <p className="text-[11px] text-muted-foreground">
+                  تعرض القائمة كل المهام (الرئيسية والفرعية) التابعة لنفس المشروع والمرحلة ونطاق العمل المختار.
+                </p>
 
                 <div className="space-y-1.5">
                   <div className="relative">
@@ -4538,7 +4601,7 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
                       type="text"
                       value={newTaskParentSearch}
                       onChange={e => setNewTaskParentSearch(e.target.value)}
-                      placeholder="ابحث في جميع المهام لربط هذه المهمة كـ Sub-task..."
+                      placeholder="ابحث في المهام المطابقة بالاسم أو المكلف..."
                       className="w-full p-2 pr-8 bg-background border border-border text-xs rounded-lg outline-none focus:border-primary font-medium"
                     />
                     <Search className="w-3.5 h-3.5 text-muted-foreground absolute right-2.5 top-3 pointer-events-none" />
@@ -4547,25 +4610,12 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
                   <select
                     value={newTaskParentTaskId}
                     onChange={e => {
-                      const selectedId = e.target.value;
-                      setNewTaskParentTaskId(selectedId);
-                      const parent = projectTasks.find(t => t.id === selectedId);
-                      if (parent) {
-                        if (parent.projectId && !newTaskProjectId) {
-                          setNewTaskProjectId(parent.projectId);
-                        }
-                        if (parent.phase && !newTaskPhase) {
-                          setNewTaskPhase(parent.phase);
-                        }
-                        if (parent.subPhase && !newTaskScope) {
-                          setNewTaskScope(parent.subPhase);
-                        }
-                      }
+                      setNewTaskParentTaskId(e.target.value);
                     }}
                     className="w-full p-2.5 bg-background border border-border text-xs rounded-lg font-bold outline-none focus:border-primary cursor-pointer text-foreground"
                   >
-                    <option value="">-- مهمة رئيسية مستقلة (ليست مهمة فرعية) --</option>
-                    {projectTasks
+                    <option value="">-- مهمة رئيسية مستقلة (بدون أب / Main Task) --</option>
+                    {availableParentTasksForNewTask
                       .filter(t => {
                         if (!newTaskParentSearch.trim()) return true;
                         const q = newTaskParentSearch.toLowerCase();
@@ -4577,9 +4627,10 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
                       })
                       .map(t => {
                         const isDone = t.status === 'Executed' || t.status === 'Approved' || (t.status as string) === 'Completed';
+                        const hierarchy = getTaskHierarchyInfo(t, projectTasks);
                         return (
                           <option key={t.id} value={t.id}>
-                            {isDone ? '✔ ' : '⏳ '} {t.title} {t.assignedTo ? `(المكلف: ${t.assignedTo})` : ''} {t.priority ? `[${t.priority}]` : ''}
+                            {hierarchy.indent}[{hierarchy.badgeLabel}] {isDone ? '✔ ' : '📌 '} {t.title} {t.assignedTo ? `(المكلف: ${t.assignedTo})` : ''} {t.priority ? `[${t.priority}]` : ''}
                           </option>
                         );
                       })}
@@ -4588,11 +4639,12 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
                   {newTaskParentTaskId && (() => {
                     const selectedParent = projectTasks.find(t => t.id === newTaskParentTaskId);
                     if (!selectedParent) return null;
+                    const hierarchy = getTaskHierarchyInfo(selectedParent, projectTasks);
                     return (
                       <div className="p-2 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-[11px] text-indigo-900 dark:text-indigo-200 flex items-center justify-between">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <Layers className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                          <span className="font-bold truncate">المهمة الأصلية: {selectedParent.title}</span>
+                          <span className="font-bold truncate">المهمة الأصلية: [{hierarchy.badgeLabel}] {selectedParent.title}</span>
                         </div>
                         <span className="text-[10px] bg-indigo-500/20 px-2 py-0.5 rounded font-black shrink-0">
                           {selectedParent.assignedTo || 'غير مسند'}
@@ -4965,22 +5017,31 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
               <div className="p-3 bg-muted/20 border border-border rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-black text-foreground flex items-center gap-1.5">
-                    <GitFork className="w-3.5 h-3.5 text-indigo-600" />
+                    <GitFork className="w-3.5 h-3.5 text-indigo-600 rotate-180" />
                     <span>المهمة الرئيسية التابعة لها (Sub-task):</span>
                   </label>
-                  {editTaskParentTaskId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditTaskParentTaskId('');
-                        setEditTaskParentSearch('');
-                      }}
-                      className="text-[10px] text-rose-600 font-bold hover:underline cursor-pointer"
-                    >
-                      إلغاء التبعية
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full font-bold">
+                      {availableParentTasksForEditTask.length} مهام متاحة للربط
+                    </span>
+                    {editTaskParentTaskId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditTaskParentTaskId('');
+                          setEditTaskParentSearch('');
+                        }}
+                        className="text-[10px] text-rose-600 font-bold hover:underline cursor-pointer"
+                      >
+                        إلغاء التبعية
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                <p className="text-[11px] text-muted-foreground">
+                  تعرض القائمة كل المهام (الرئيسية والفرعية) التابعة لنفس المشروع والمرحلة ونطاق العمل المختار (مع منع الربط الدائري).
+                </p>
 
                 <div className="space-y-1.5">
                   <div className="relative">
@@ -4988,7 +5049,7 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
                       type="text"
                       value={editTaskParentSearch}
                       onChange={e => setEditTaskParentSearch(e.target.value)}
-                      placeholder="ابحث في المهام لاختيار المهمة الرئيسية..."
+                      placeholder="ابحث في المهام المطابقة بالاسم أو المكلف..."
                       className="w-full p-2 pr-8 bg-background border border-border text-xs rounded-lg outline-none focus:border-primary font-medium"
                     />
                     <Search className="w-3.5 h-3.5 text-muted-foreground absolute right-2.5 top-3 pointer-events-none" />
@@ -4999,23 +5060,44 @@ export const MyTeam: React.FC<MyTeamProps> = ({ onNavigateToTab }) => {
                     onChange={e => setEditTaskParentTaskId(e.target.value)}
                     className="w-full p-2.5 bg-background border border-border text-xs rounded-lg font-bold outline-none focus:border-primary cursor-pointer text-foreground"
                   >
-                    <option value="">-- مهمة رئيسية مستقلة (بدون أصل) --</option>
-                    {projectTasks
-                      .filter(t => t.id !== editingTask.id)
+                    <option value="">-- مهمة رئيسية مستقلة (بدون أصل / Main Task) --</option>
+                    {availableParentTasksForEditTask
                       .filter(t => {
                         if (!editTaskParentSearch.trim()) return true;
                         const q = editTaskParentSearch.toLowerCase();
                         return (
                           t.title?.toLowerCase().includes(q) ||
-                          t.assignedTo?.toLowerCase().includes(q)
+                          t.assignedTo?.toLowerCase().includes(q) ||
+                          t.description?.toLowerCase().includes(q)
                         );
                       })
-                      .map(t => (
-                        <option key={t.id} value={t.id}>
-                          {t.title} {t.assignedTo ? `(${t.assignedTo})` : ''}
-                        </option>
-                      ))}
+                      .map(t => {
+                        const isDone = t.status === 'Executed' || t.status === 'Approved' || (t.status as string) === 'Completed';
+                        const hierarchy = getTaskHierarchyInfo(t, projectTasks);
+                        return (
+                          <option key={t.id} value={t.id}>
+                            {hierarchy.indent}[{hierarchy.badgeLabel}] {isDone ? '✔ ' : '📌 '} {t.title} {t.assignedTo ? `(${t.assignedTo})` : ''} {t.priority ? `[${t.priority}]` : ''}
+                          </option>
+                        );
+                      })}
                   </select>
+
+                  {editTaskParentTaskId && (() => {
+                    const selectedParent = projectTasks.find(t => t.id === editTaskParentTaskId);
+                    if (!selectedParent) return null;
+                    const hierarchy = getTaskHierarchyInfo(selectedParent, projectTasks);
+                    return (
+                      <div className="p-2 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-[11px] text-indigo-900 dark:text-indigo-200 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Layers className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span className="font-bold truncate">المهمة الأصلية: [{hierarchy.badgeLabel}] {selectedParent.title}</span>
+                        </div>
+                        <span className="text-[10px] bg-indigo-500/20 px-2 py-0.5 rounded font-black shrink-0">
+                          {selectedParent.assignedTo || 'غير مسند'}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 

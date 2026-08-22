@@ -46,6 +46,7 @@ import { StartTaskModal } from '../common/StartTaskModal';
 import { CompleteTaskModal } from '../common/CompleteTaskModal';
 import { getTaskExecutionMetrics, formatDateTimeArabic, formatDurationArabic, isOpenTask } from '../../lib/taskUtils';
 import { ProjectTask } from '../../types';
+import { getValidParentTasks, getTaskHierarchyInfo, isParentTaskIdValid } from '../../utils/taskHierarchyUtils';
 
 // Types for local commitments
 export interface Commitment {
@@ -397,11 +398,63 @@ export const TimeManagement: React.FC = () => {
   });
   const [newCommitmentParentSearch, setNewCommitmentParentSearch] = useState('');
 
+  // Project objects and parent task filtering for Add Commitment
+  const selectedNewProjectObj = useMemo(() => {
+    return projects.find((p: any) => p.id === newCommitment.projectId) || null;
+  }, [projects, newCommitment.projectId]);
+
+  const availableParentTasksForNewCommitment = useMemo(() => {
+    return getValidParentTasks(
+      projectTasks,
+      newCommitment.projectId,
+      newCommitment.phase,
+      newCommitment.subPhase,
+      null,
+      selectedNewProjectObj
+    );
+  }, [projectTasks, newCommitment.projectId, newCommitment.phase, newCommitment.subPhase, selectedNewProjectObj]);
+
   // Edit commitment state
   const [editingCommitment, setEditingCommitment] = useState<any | null>(null);
   const [editCommitmentParentSearch, setEditCommitmentParentSearch] = useState('');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+
+  // Project objects and parent task filtering for Edit Commitment
+  const selectedEditProjectObj = useMemo(() => {
+    return projects.find((p: any) => p.id === editingCommitment?.projectId) || null;
+  }, [projects, editingCommitment?.projectId]);
+
+  const availableParentTasksForEditCommitment = useMemo(() => {
+    if (!editingCommitment) return [];
+    return getValidParentTasks(
+      projectTasks,
+      editingCommitment.projectId,
+      editingCommitment.phase,
+      editingCommitment.subPhase,
+      editingCommitment.id,
+      selectedEditProjectObj
+    );
+  }, [projectTasks, editingCommitment, selectedEditProjectObj]);
+
+  // Auto-clear invalid parent task if project, phase, or scope changes
+  useEffect(() => {
+    if (isAddModalOpen && newCommitment.parentTaskId) {
+      const isValid = availableParentTasksForNewCommitment.some(t => String(t.id) === String(newCommitment.parentTaskId));
+      if (!isValid) {
+        setNewCommitment(prev => ({ ...prev, parentTaskId: '' }));
+      }
+    }
+  }, [isAddModalOpen, availableParentTasksForNewCommitment, newCommitment.parentTaskId]);
+
+  useEffect(() => {
+    if (isEditModalOpen && editingCommitment && editingCommitment.parentTaskId) {
+      const isValid = availableParentTasksForEditCommitment.some(t => String(t.id) === String(editingCommitment.parentTaskId));
+      if (!isValid) {
+        setEditingCommitment((prev: any) => prev ? ({ ...prev, parentTaskId: '' }) : null);
+      }
+    }
+  }, [isEditModalOpen, availableParentTasksForEditCommitment, editingCommitment?.parentTaskId]);
 
   const handleOpenEditModal = (taskItem: any, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -2440,29 +2493,109 @@ export const TimeManagement: React.FC = () => {
               </div>
 
               <form onSubmit={handleAddCommitment} className="p-4 sm:p-6 space-y-4 flex-1 overflow-y-auto min-h-0 text-xs">
+                {/* PROJECT, PHASE, AND SCOPE SELECTION */}
+                <div className="space-y-2 bg-muted/20 p-3.5 border border-border rounded-xl">
+                  <div className="space-y-1">
+                    <label className="text-xs font-black text-foreground flex items-center gap-1.5">
+                      <Briefcase className="w-3.5 h-3.5 text-primary" />
+                      <span>{t('ربط بمشروع محدد (اختياري):')}</span>
+                    </label>
+                    <select
+                      className="w-full p-2.5 bg-background border border-border rounded-lg text-xs font-bold text-foreground outline-none focus:ring-2 focus:ring-primary cursor-pointer"
+                      value={newCommitment.projectId || ''}
+                      onChange={(e) => {
+                        const newPId = e.target.value;
+                        const selP = projects.find((p: any) => p.id === newPId);
+                        setNewCommitment({
+                          ...newCommitment,
+                          projectId: newPId,
+                          phase: selP?.phases?.[0] || '',
+                          subPhase: selP?.scope?.[0]?.name || 'General'
+                        });
+                      }}
+                    >
+                      <option value="">📌 {t('بدون مشروع محدد (تكليف مباشر/شخصي)')}</option>
+                      {projects.map((p: any) => (
+                        <option key={p.id} value={p.id}>
+                          📁 {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* DYNAMIC PHASE & SCOPE SELECTION */}
+                  {newCommitment.projectId && (() => {
+                    const selP = projects.find((p: any) => p.id === newCommitment.projectId);
+                    if (!selP) return null;
+                    const pPhases = selP.phases || [];
+                    const pScopes = selP.scope || [];
+
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                        <div>
+                          <label className="block mb-1 text-primary font-black text-xs">{t('المرحلة (Phase):')}</label>
+                          <select
+                            value={newCommitment.phase || ''}
+                            onChange={(e) => setNewCommitment({ ...newCommitment, phase: e.target.value })}
+                            className="w-full p-2 bg-background border border-border rounded font-bold outline-none focus:border-primary text-xs cursor-pointer text-foreground"
+                          >
+                            <option value="">{t('-- بدون مرحلة محددة --')}</option>
+                            {pPhases.map((phase: string) => (
+                              <option key={phase} value={phase}>{phase}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block mb-1 text-primary font-black text-xs">{t('نطاق العمل / Scope (WBS):')}</label>
+                          <select
+                            value={newCommitment.subPhase || ''}
+                            onChange={(e) => setNewCommitment({ ...newCommitment, subPhase: e.target.value })}
+                            className="w-full p-2 bg-background border border-border rounded font-bold outline-none focus:border-primary text-xs cursor-pointer text-foreground"
+                          >
+                            <option value="">{t('-- عام (General) --')}</option>
+                            {pScopes.map((sc: any) => (
+                              <option key={sc.id || sc.name} value={sc.name}>{sc.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
                 {/* SUB-TASK / PARENT TASK LINKING */}
                 <div className="bg-muted/30 p-3.5 border border-border rounded-xl space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="text-foreground font-black flex items-center gap-1.5 text-xs">
                       <GitFork className="w-3.5 h-3.5 text-primary rotate-180" />
-                      <span>{t('الربط بمهمة رئيسية (إنشاء كمهمة فرعية - Sub-task):')}</span>
+                      <span>{t('الربط بمهمة رئيسية أو فرعية (إنشاء كـ Sub-task):')}</span>
                     </label>
-                    {newCommitment.parentTaskId && (
-                      <button
-                        type="button"
-                        onClick={() => setNewCommitment(prev => ({ ...prev, parentTaskId: '' }))}
-                        className="text-[10px] text-rose-600 hover:underline cursor-pointer font-bold"
-                      >
-                        {t('إلغاء الربط بالمهمة الرئيسية')}
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full font-bold">
+                        {availableParentTasksForNewCommitment.length} {t('مهام متاحة للربط')}
+                      </span>
+                      {newCommitment.parentTaskId && (
+                        <button
+                          type="button"
+                          onClick={() => setNewCommitment(prev => ({ ...prev, parentTaskId: '' }))}
+                          className="text-[10px] text-rose-600 hover:underline cursor-pointer font-bold"
+                        >
+                          {t('إلغاء الربط')}
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('تعرض القائمة كل المهام (الرئيسية والفرعية) التابعة لنفس المشروع والمرحلة ونطاق العمل المختار.')}
+                  </p>
 
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
-                      placeholder={t('ابحث عن المهمة الرئيسية بالاسم...')}
+                      placeholder={t('ابحث في المهام المطابقة بالاسم أو المكلف...')}
                       value={newCommitmentParentSearch}
                       onChange={e => setNewCommitmentParentSearch(e.target.value)}
                       className="w-full pl-3 pr-8 py-2 bg-background border border-border rounded-lg outline-none focus:border-primary font-bold text-xs text-foreground"
@@ -2473,54 +2606,48 @@ export const TimeManagement: React.FC = () => {
                     value={newCommitment.parentTaskId || ''}
                     onChange={e => {
                       const pId = e.target.value;
-                      const selectedParent = projectTasks.find(t => String(t.id) === pId);
-                      if (selectedParent) {
-                        setNewCommitment(prev => ({
-                          ...prev,
-                          parentTaskId: pId,
-                          projectId: selectedParent.projectId || prev.projectId,
-                          phase: selectedParent.phase || prev.phase,
-                          subPhase: selectedParent.subPhase || prev.subPhase
-                        }));
-                      } else {
-                        setNewCommitment(prev => ({ ...prev, parentTaskId: '' }));
-                      }
+                      setNewCommitment(prev => ({ ...prev, parentTaskId: pId }));
                     }}
-                    className="w-full p-2 bg-background border border-border rounded-lg outline-none focus:border-primary font-bold text-xs text-foreground cursor-pointer"
+                    className="w-full p-2.5 bg-background border border-border rounded-lg outline-none focus:border-primary font-bold text-xs text-foreground cursor-pointer"
                   >
-                    <option value="">{t('-- بدون مهمة رئيسية (مهمة مستقلة) --')}</option>
-                    {projectTasks
+                    <option value="">{t('-- مهمة رئيسية مستقلة (بدون أب / Main Task) --')}</option>
+                    {availableParentTasksForNewCommitment
                       .filter(t => {
-                        if (!newCommitmentParentSearch) return true;
-                        return (t.title || '').toLowerCase().includes(newCommitmentParentSearch.toLowerCase());
+                        if (!newCommitmentParentSearch.trim()) return true;
+                        const q = newCommitmentParentSearch.toLowerCase();
+                        return (
+                          (t.title || '').toLowerCase().includes(q) ||
+                          (t.assignedTo || '').toLowerCase().includes(q)
+                        );
                       })
-                      .slice(0, 50)
                       .map(t => {
-                        const parentP = projects.find((p: any) => p.id === t.projectId);
+                        const isDone = t.status === 'Executed' || t.status === 'Approved' || (t.status as string) === 'Completed';
+                        const hierarchy = getTaskHierarchyInfo(t, projectTasks);
                         return (
                           <option key={t.id} value={t.id}>
-                            📌 {t.title} {parentP ? `(${parentP.name})` : ''} {t.assignedTo ? `[${t.assignedTo}]` : ''}
+                            {hierarchy.indent}[{hierarchy.badgeLabel}] {isDone ? '✔ ' : '📌 '} {t.title} {t.assignedTo ? `(${t.assignedTo})` : ''}
                           </option>
                         );
                       })}
                   </select>
 
                   {newCommitment.parentTaskId && (() => {
-                    const pTask = projectTasks.find(t => String(t.id) === newCommitment.parentTaskId);
+                    const pTask = projectTasks.find(t => String(t.id) === String(newCommitment.parentTaskId));
                     if (!pTask) return null;
-                    const pProj = projects.find((p: any) => p.id === pTask.projectId);
+                    const hierarchy = getTaskHierarchyInfo(pTask, projectTasks);
                     return (
-                      <div className="p-2.5 bg-primary/10 border border-primary/30 rounded-lg text-[11px] font-bold text-foreground space-y-1">
-                        <div className="flex items-center gap-1.5 text-primary">
-                          <GitFork className="w-3.5 h-3.5 rotate-180 shrink-0" />
-                          <span>{t('سيتم إنشاء هذه المهمة كمهمة فرعية تابعة لـ:')}</span>
-                        </div>
-                        <p className="font-black text-foreground pr-5">« {pTask.title} »</p>
-                        {pProj && (
-                          <span className="inline-block text-[10px] bg-background/80 px-2 py-0.5 rounded text-muted-foreground border border-border">
-                            📁 {pProj.name}
+                      <div className="p-2.5 bg-primary/10 border border-primary/30 rounded-lg text-[11px] font-bold text-foreground flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <GitFork className="w-3.5 h-3.5 text-primary rotate-180 shrink-0" />
+                          <span className="truncate">
+                            {hierarchy.isSubTask ? t('إنشاء مستوى فرعي جديد تابع لـ:') : t('مرتبطة كـ مهمة فرعية من:')} <strong>{pTask.title}</strong>
                           </span>
-                        )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-2 py-0.5 rounded font-black">
+                            [{hierarchy.badgeLabel}]
+                          </span>
+                        </div>
                       </div>
                     );
                   })()}
@@ -2593,71 +2720,6 @@ export const TimeManagement: React.FC = () => {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-black text-muted-foreground">{t('ربط بمشروع محدد (اختياري):')}</label>
-                  <select
-                    className="w-full p-2.5 bg-background border border-border rounded-lg text-xs font-bold text-foreground outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-                    value={newCommitment.projectId || ''}
-                    onChange={(e) => {
-                      const newPId = e.target.value;
-                      const selP = projects.find((p: any) => p.id === newPId);
-                      setNewCommitment({
-                        ...newCommitment,
-                        projectId: newPId,
-                        phase: selP?.phases?.[0] || '',
-                        subPhase: selP?.scope?.[0]?.name || 'General'
-                      });
-                    }}
-                  >
-                    <option value="">📌 {t('بدون مشروع محدد (تكليف مباشر/شخصي)')}</option>
-                    {projects.map((p: any) => (
-                      <option key={p.id} value={p.id}>
-                        📁 {p.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  {/* DYNAMIC PHASE & SCOPE SELECTION */}
-                  {newCommitment.projectId && (() => {
-                    const selP = projects.find((p: any) => p.id === newCommitment.projectId);
-                    if (!selP) return null;
-                    const pPhases = selP.phases || [];
-                    const pScopes = selP.scope || [];
-
-                    return (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 mt-2 bg-primary/5 border border-primary/20 rounded-lg">
-                        <div>
-                          <label className="block mb-1 text-primary font-black text-xs">{t('المرحلة (Phase):')}</label>
-                          <select
-                            value={newCommitment.phase || ''}
-                            onChange={(e) => setNewCommitment({ ...newCommitment, phase: e.target.value })}
-                            className="w-full p-2 bg-background border border-border rounded font-bold outline-none focus:border-primary text-xs cursor-pointer text-foreground"
-                          >
-                            <option value="">{t('-- بدون مرحلة محددة --')}</option>
-                            {pPhases.map((phase: string) => (
-                              <option key={phase} value={phase}>{phase}</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block mb-1 text-primary font-black text-xs">{t('نطاق العمل / Scope (WBS):')}</label>
-                          <select
-                            value={newCommitment.subPhase || ''}
-                            onChange={(e) => setNewCommitment({ ...newCommitment, subPhase: e.target.value })}
-                            className="w-full p-2 bg-background border border-border rounded font-bold outline-none focus:border-primary text-xs cursor-pointer text-foreground"
-                          >
-                            <option value="">{t('-- عام (General) --')}</option>
-                            {pScopes.map((sc: any) => (
-                              <option key={sc.id || sc.name} value={sc.name}>{sc.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                <div className="space-y-1">
                   <label className="text-xs font-black text-muted-foreground">{t('تفاصيل أو ملاحظات إضافية:')}</label>
                   <textarea
                     rows={3}
@@ -2714,29 +2776,107 @@ export const TimeManagement: React.FC = () => {
               </div>
 
               <form onSubmit={handleSaveEditCommitment} className="space-y-4 text-xs font-bold flex-1 overflow-y-auto min-h-0 pr-1 pl-1">
+                {/* PROJECT, PHASE, AND SCOPE SELECTION */}
+                <div className="space-y-2 bg-muted/20 p-3.5 border border-border rounded-xl">
+                  <div className="space-y-1">
+                    <label className="font-bold text-foreground block flex items-center gap-1.5">
+                      <Briefcase className="w-3.5 h-3.5 text-purple-600" />
+                      <span>{t('ربط بمشروع (اختياري):')}</span>
+                    </label>
+                    <select
+                      value={editingCommitment.projectId || ''}
+                      onChange={(e) => {
+                        const newPId = e.target.value;
+                        const selP = projects.find((p: any) => p.id === newPId);
+                        setEditingCommitment({
+                          ...editingCommitment,
+                          projectId: newPId,
+                          phase: selP?.phases?.[0] || '',
+                          subPhase: selP?.scope?.[0]?.name || 'General'
+                        });
+                      }}
+                      className="w-full p-2.5 bg-background border border-border text-foreground text-xs font-bold rounded-lg cursor-pointer"
+                    >
+                      <option value="">📌 {t('بدون مشروع محدد (التزام مستقل)')}</option>
+                      {projects.map(p => (
+                        <option key={p.id} value={p.id}>📁 {p.name} ({(p as any).code || p.id})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* DYNAMIC PHASE & SCOPE SELECTION */}
+                  {editingCommitment.projectId && (() => {
+                    const selP = projects.find((p: any) => p.id === editingCommitment.projectId);
+                    if (!selP) return null;
+                    const pPhases = selP.phases || [];
+                    const pScopes = selP.scope || [];
+
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-purple-500/5 border border-purple-500/20 rounded-lg">
+                        <div>
+                          <label className="block mb-1 text-purple-600 dark:text-purple-400 font-black text-xs">{t('المرحلة (Phase):')}</label>
+                          <select
+                            value={editingCommitment.phase || ''}
+                            onChange={(e) => setEditingCommitment({ ...editingCommitment, phase: e.target.value })}
+                            className="w-full p-2 bg-background border border-border rounded font-bold outline-none focus:border-purple-600 text-xs cursor-pointer text-foreground"
+                          >
+                            <option value="">{t('-- بدون مرحلة محددة --')}</option>
+                            {pPhases.map((phase: string) => (
+                              <option key={phase} value={phase}>{phase}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block mb-1 text-purple-600 dark:text-purple-400 font-black text-xs">{t('نطاق العمل / Scope (WBS):')}</label>
+                          <select
+                            value={editingCommitment.subPhase || ''}
+                            onChange={(e) => setEditingCommitment({ ...editingCommitment, subPhase: e.target.value })}
+                            className="w-full p-2 bg-background border border-border rounded font-bold outline-none focus:border-purple-600 text-xs cursor-pointer text-foreground"
+                          >
+                            <option value="">{t('-- عام (General) --')}</option>
+                            {pScopes.map((sc: any) => (
+                              <option key={sc.id || sc.name} value={sc.name}>{sc.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
                 {/* SUB-TASK LINKING IN EDIT MODAL */}
                 <div className="bg-muted/30 p-3.5 border border-border rounded-xl space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="text-foreground font-black flex items-center gap-1.5 text-xs">
                       <GitFork className="w-3.5 h-3.5 text-purple-600 rotate-180" />
-                      <span>{t('الربط بمهمة رئيسية (كمهمة فرعية - Sub-task):')}</span>
+                      <span>{t('الربط بمهمة رئيسية أو فرعية (Sub-task):')}</span>
                     </label>
-                    {editingCommitment.parentTaskId && (
-                      <button
-                        type="button"
-                        onClick={() => setEditingCommitment({ ...editingCommitment, parentTaskId: '' })}
-                        className="text-[10px] text-rose-600 hover:underline cursor-pointer font-bold"
-                      >
-                        {t('إلغاء الربط بالمهمة الرئيسية')}
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded-full font-bold">
+                        {availableParentTasksForEditCommitment.length} {t('مهام متاحة للربط')}
+                      </span>
+                      {editingCommitment.parentTaskId && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingCommitment({ ...editingCommitment, parentTaskId: '' })}
+                          className="text-[10px] text-rose-600 hover:underline cursor-pointer font-bold"
+                        >
+                          {t('إلغاء الربط')}
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('تعرض القائمة كل المهام (الرئيسية والفرعية) التابعة لنفس المشروع والمرحلة ونطاق العمل المختار، مع منع الربط الدائري.')}
+                  </p>
 
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
-                      placeholder={t('ابحث عن المهمة الرئيسية بالاسم...')}
+                      placeholder={t('ابحث في المهام المطابقة بالاسم أو المكلف...')}
                       value={editCommitmentParentSearch}
                       onChange={e => setEditCommitmentParentSearch(e.target.value)}
                       className="w-full pl-3 pr-8 py-2 bg-background border border-border rounded-lg outline-none focus:border-purple-600 font-bold text-xs text-foreground"
@@ -2747,55 +2887,48 @@ export const TimeManagement: React.FC = () => {
                     value={editingCommitment.parentTaskId || ''}
                     onChange={e => {
                       const pId = e.target.value;
-                      const selectedParent = projectTasks.find(t => String(t.id) === pId);
-                      if (selectedParent) {
-                        setEditingCommitment({
-                          ...editingCommitment,
-                          parentTaskId: pId,
-                          projectId: selectedParent.projectId || editingCommitment.projectId,
-                          phase: selectedParent.phase || editingCommitment.phase,
-                          subPhase: selectedParent.subPhase || editingCommitment.subPhase
-                        });
-                      } else {
-                        setEditingCommitment({ ...editingCommitment, parentTaskId: '' });
-                      }
+                      setEditingCommitment({ ...editingCommitment, parentTaskId: pId });
                     }}
-                    className="w-full p-2 bg-background border border-border rounded-lg outline-none focus:border-purple-600 font-bold text-xs text-foreground cursor-pointer"
+                    className="w-full p-2.5 bg-background border border-border rounded-lg outline-none focus:border-purple-600 font-bold text-xs text-foreground cursor-pointer"
                   >
-                    <option value="">{t('-- بدون مهمة رئيسية (مهمة مستقلة) --')}</option>
-                    {projectTasks
-                      .filter(t => String(t.id) !== String(editingCommitment.id))
+                    <option value="">{t('-- بدون مهمة رئيسية (مهمة مستقلة / Main Task) --')}</option>
+                    {availableParentTasksForEditCommitment
                       .filter(t => {
-                        if (!editCommitmentParentSearch) return true;
-                        return (t.title || '').toLowerCase().includes(editCommitmentParentSearch.toLowerCase());
+                        if (!editCommitmentParentSearch.trim()) return true;
+                        const q = editCommitmentParentSearch.toLowerCase();
+                        return (
+                          (t.title || '').toLowerCase().includes(q) ||
+                          (t.assignedTo || '').toLowerCase().includes(q)
+                        );
                       })
-                      .slice(0, 50)
                       .map(t => {
-                        const parentP = projects.find((p: any) => p.id === t.projectId);
+                        const isDone = t.status === 'Executed' || t.status === 'Approved' || (t.status as string) === 'Completed';
+                        const hierarchy = getTaskHierarchyInfo(t, projectTasks);
                         return (
                           <option key={t.id} value={t.id}>
-                            📌 {t.title} {parentP ? `(${parentP.name})` : ''} {t.assignedTo ? `[${t.assignedTo}]` : ''}
+                            {hierarchy.indent}[{hierarchy.badgeLabel}] {isDone ? '✔ ' : '📌 '} {t.title} {t.assignedTo ? `(${t.assignedTo})` : ''}
                           </option>
                         );
                       })}
                   </select>
 
                   {editingCommitment.parentTaskId && (() => {
-                    const pTask = projectTasks.find(t => String(t.id) === editingCommitment.parentTaskId);
+                    const pTask = projectTasks.find(t => String(t.id) === String(editingCommitment.parentTaskId));
                     if (!pTask) return null;
-                    const pProj = projects.find((p: any) => p.id === pTask.projectId);
+                    const hierarchy = getTaskHierarchyInfo(pTask, projectTasks);
                     return (
-                      <div className="p-2.5 bg-purple-500/10 border border-purple-500/30 rounded-lg text-[11px] font-bold text-foreground space-y-1">
-                        <div className="flex items-center gap-1.5 text-purple-600 dark:text-purple-400">
-                          <GitFork className="w-3.5 h-3.5 rotate-180 shrink-0" />
-                          <span>{t('مرتبطة كمهمة فرعية للمهمة الرئيسية:')}</span>
-                        </div>
-                        <p className="font-black text-foreground pr-5">« {pTask.title} »</p>
-                        {pProj && (
-                          <span className="inline-block text-[10px] bg-background/80 px-2 py-0.5 rounded text-muted-foreground border border-border">
-                            📁 {pProj.name}
+                      <div className="p-2.5 bg-purple-500/10 border border-purple-500/30 rounded-lg text-[11px] font-bold text-foreground flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <GitFork className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 rotate-180 shrink-0" />
+                          <span className="truncate">
+                            {hierarchy.isSubTask ? t('إنشاء مستوى فرعي جديد تابع لـ:') : t('مرتبطة كـ مهمة فرعية من:')} <strong>{pTask.title}</strong>
                           </span>
-                        )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[10px] bg-purple-500/20 text-purple-700 dark:text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded font-black">
+                            [{hierarchy.badgeLabel}]
+                          </span>
+                        </div>
                       </div>
                     );
                   })()}
@@ -2860,20 +2993,6 @@ export const TimeManagement: React.FC = () => {
                       className="w-full p-2.5 bg-background border border-border text-foreground text-xs font-bold font-mono rounded-lg"
                     />
                   </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground block">ربط بمشروع (اختياري)</label>
-                  <select
-                    value={editingCommitment.projectId || ''}
-                    onChange={(e) => setEditingCommitment({ ...editingCommitment, projectId: e.target.value })}
-                    className="w-full p-2.5 bg-background border border-border text-foreground text-xs font-bold rounded-lg"
-                  >
-                    <option value="">📌 بدون مشروع محدد (التزام مستقل)</option>
-                    {projects.map(p => (
-                      <option key={p.id} value={p.id}>📁 {p.name} ({(p as any).code || p.id})</option>
-                    ))}
-                  </select>
                 </div>
 
                 <div className="space-y-1">

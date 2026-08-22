@@ -218,7 +218,7 @@ export interface Transaction {
 }
 
 export type ProjectStatus = 'Active' | 'Completed' | 'On Hold';
-export type TaskStatus = 'Pending' | 'In Progress' | 'Under Review' | 'Approved' | 'Rejected' | 'Testing' | 'Executed';
+export type TaskStatus = 'Pending' | 'In Progress' | 'Under Review' | 'Approved' | 'Rejected' | 'Testing' | 'Executed' | 'Completed';
 export type ProjectPhase = 'Analysis' | 'Design' | 'Development';
 
 export interface LeaveRequest {
